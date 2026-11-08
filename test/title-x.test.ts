@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { lookupX } from "../src/title/x";
+import { lookupX, pageText } from "../src/title/x";
+import articleText from "./fixtures/x-article.json?raw";
 import { network } from "./network";
 
 // Shapes follow the research 03 probes (2026-11-07): oEmbed JSON with `\u003c`-escaped
@@ -347,5 +348,164 @@ describe("no fxtwitter", () => {
       });
     }
     expect(Object.keys(sources).length).toBeGreaterThan(5);
+  });
+});
+
+// SAT-43: an X Article post. oEmbed's text is only a t.co link; x.com's page (as Twitterbot)
+// names the article in og:title and og:description. Fixture from the lead's live probe.
+const ARTICLE = JSON.parse(articleText) as {
+  id: string;
+  canonicalUrl: string;
+  oembed: Record<string, unknown>;
+  page: { ogTitle: string; ogDescription: string };
+  articleUrlPage: { title: string };
+};
+const ARTICLE_OEMBED = JSON.stringify(ARTICLE.oembed).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+const ARTICLE_PAGE_URL = `https://x.com/i/status/${ARTICLE.id}`;
+const ARTICLE_PAGE = xPage(ARTICLE.page.ogTitle, ARTICLE.page.ogDescription);
+const LINK_ONLY = "https://t.co/Lv1eB0x";
+
+describe("SAT-43: an X Article gets its text from the Twitterbot page", () => {
+  it("oEmbed text only a link: one more GET, as Twitterbot; the article title becomes the post text", async () => {
+    const { seen, record } = recorder();
+    network.use(
+      http.get(OEMBED, ({ request }) => {
+        record(request);
+        return jsonText(ARTICLE_OEMBED);
+      }),
+      http.get(ARTICLE_PAGE_URL, ({ request }) => {
+        record(request);
+        return htmlText(ARTICLE_PAGE);
+      }),
+    );
+
+    const result = await lookupX(ARTICLE.id, signal());
+
+    expect(result).toEqual({
+      title: "Aaron Levie: The never-ending last mile of work",
+      url: ARTICLE.canonicalUrl,
+      description: "The never-ending last mile of work",
+      author: "Aaron Levie",
+      handle: "levie",
+      source: "x-oembed",
+      bytesRead: bytes(ARTICLE_OEMBED) + bytes(ARTICLE_PAGE),
+    });
+    expect(seen.map((s) => [s.url.split("?")[0], s.userAgent])).toEqual([
+      [OEMBED, null],
+      [ARTICLE_PAGE_URL, "Twitterbot/1.0"],
+    ]);
+  });
+
+  it("a post with text of its own never reads the page", async () => {
+    const { seen, record } = recorder();
+    network.use(
+      http.get(OEMBED, ({ request }) => {
+        record(request);
+        return jsonText(OPENAI_OEMBED);
+      }),
+      http.get(PAGE, ({ request }) => {
+        record(request);
+        return htmlText(ARTICLE_PAGE);
+      }),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(result?.description).toMatch(/^Tom & Jerry/);
+    expect(seen.map((s) => new URL(s.url).host)).toEqual(["publish.x.com"]);
+  });
+
+  const unchanged = (pageBytes: number) => ({
+    title: `Aaron Levie: ${LINK_ONLY}`,
+    url: ARTICLE.canonicalUrl,
+    description: LINK_ONLY,
+    author: "Aaron Levie",
+    handle: "levie",
+    source: "x-oembed",
+    bytesRead: bytes(ARTICLE_OEMBED) + pageBytes,
+  });
+
+  it.each([
+    ["og:description empty", xPage(ARTICLE.page.ogTitle, "")],
+    ["og:description only a URL", xPage("Aaron Levie on X: &quot;https://t.co/Lv1eB0x&quot; / X", LINK_ONLY)],
+    ["og:description only a pic.twitter.com link", xPage("Aaron Levie (@levie) on X", "pic.twitter.com/AbC123")],
+    [
+      "X's generic logged-out page",
+      xPage("X", "From breaking news and entertainment to sports and politics, get the full story with all the live commentary."),
+    ],
+    [
+      "X's generic text under a post title",
+      xPage("Aaron Levie on X: &quot;x&quot; / X", "From breaking news and entertainment to sports and politics, get the full story."),
+    ],
+    ["the article URL's own page (generic og:title)", xPage(ARTICLE.articleUrlPage.title, ARTICLE.page.ogDescription)],
+  ])("a page with no post text (%s) leaves oEmbed's link-only result as it was", async (_label, html) => {
+    network.use(
+      http.get(OEMBED, () => jsonText(ARTICLE_OEMBED)),
+      http.get(ARTICLE_PAGE_URL, () => htmlText(html)),
+    );
+
+    expect(await lookupX(ARTICLE.id, signal())).toEqual(unchanged(bytes(html)));
+  });
+
+  it.each([
+    ["404", () => htmlText(NOT_FOUND_HTML, 404)],
+    ["network error", () => HttpResponse.error()],
+    ["non-HTML", () => HttpResponse.json({ og: "nope" })],
+  ])("a failed page read (%s) leaves oEmbed's link-only result as it was", async (_label, answer) => {
+    network.use(
+      http.get(OEMBED, () => jsonText(ARTICLE_OEMBED)),
+      http.get(ARTICLE_PAGE_URL, answer),
+    );
+
+    expect(await lookupX(ARTICLE.id, signal())).toEqual(unchanged(0));
+  });
+
+  it("the caller's signal aborting mid-page ends the read; oEmbed's result comes back, no throw", async () => {
+    const controller = new AbortController();
+    network.use(
+      http.get(OEMBED, () => jsonText(ARTICLE_OEMBED)),
+      http.get(ARTICLE_PAGE_URL, async () => {
+        controller.abort();
+        return new Promise<Response>(() => {});
+      }),
+    );
+
+    const start = performance.now();
+    const result = await lookupX(ARTICLE.id, controller.signal);
+
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(result).toEqual(unchanged(0));
+  });
+});
+
+describe("SAT-43: pageText", () => {
+  it("prefers og:title's quoted part when og:description is a cut of it (trailing … stripped)", () => {
+    const title = 'Aaron Levie on X: "The never-ending last mile of work" / X';
+    expect(pageText(title, "The never-ending last mile of work…")).toBe("The never-ending last mile of work");
+    expect(pageText(title, "The never-ending last…")).toBe("The never-ending last mile of work");
+  });
+
+  it("uses og:description, ellipsis stripped, when it isn't a cut of the quoted title", () => {
+    expect(pageText('Aaron Levie on X: "Short" / X', "A longer summary of the article…")).toBe(
+      "A longer summary of the article",
+    );
+    expect(pageText("Aaron Levie (@levie) on X", "The never-ending last mile of work…")).toBe(
+      "The never-ending last mile of work",
+    );
+  });
+
+  it("collapses whitespace in both before comparing", () => {
+    expect(pageText('A on X: "One  two\nthree" / X', "One two…")).toBe("One two three");
+  });
+
+  it.each([
+    ["no og:title", "", "The never-ending last mile of work"],
+    ["a generic og:title", "X - The Everything App", "The never-ending last mile of work"],
+    ["an empty og:description", 'A on X: "The never-ending last mile of work" / X', ""],
+    ["only an ellipsis", 'A on X: "Title" / X', "…"],
+    ["only links", "A (@a) on X", "https://t.co/a pic.twitter.com/b"],
+    ["the quoted title only a link", 'A on X: "https://t.co/a" / X', "https://t.co/a…"],
+  ])("null for %s", (_label, title, description) => {
+    expect(pageText(title, description)).toBeNull();
   });
 });
