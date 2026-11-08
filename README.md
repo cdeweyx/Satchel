@@ -150,4 +150,4 @@ Issues and PRs are welcome. Run `npm run check` before opening a PR, and never c
 
 ## License
 
-MIT. The license file is coming soon.
+MIT. See [`LICENSE`](LICENSE).
