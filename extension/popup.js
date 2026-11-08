@@ -12,8 +12,6 @@ const POPUP_PORT = "popup";
 const NO_REPLY = "no reply";
 const LABELS = { later: "Send to inbox", read: "Mark as archived", favorite: "Favorite" };
 const ERROR_LABEL = "Couldn't save, try again";
-const HINT_REST = "? for keys";
-const HINT_WINDOW = "F within 1.5 s, or any key";
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn", "OS"]);
 const STATUSES = ["later", "read", "favorite"];
 
@@ -118,7 +116,6 @@ function openWindow() {
   fav.hidden = false;
   fav.disabled = false;
   fav.classList.add("is-current");
-  $("hint").textContent = HINT_WINDOW;
   windowTimer = setTimeout(endWindow, FAVORITE_WINDOW_MS);
 }
 
@@ -138,7 +135,6 @@ async function pressFavorite() {
   begin("favorite");
   rowOf("favorite").hidden = false;
   rowOf("favorite").classList.add("is-current");
-  $("hint").textContent = HINT_REST;
   setState("pending");
   // Sent now; the service worker runs it after the read for the same URL. SAVED waits
   // for both replies, and follows the favorite's: if it landed, the page is saved.
@@ -157,7 +153,6 @@ function hideFavorite() {
   fav.hidden = true;
   fav.disabled = true;
   fav.classList.remove("is-current");
-  $("hint").textContent = HINT_REST;
 }
 
 // The save beat: the keycap is already filled, the SAVED plate lands, then close.

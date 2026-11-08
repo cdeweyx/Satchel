@@ -398,6 +398,7 @@ describe("L sends later", () => {
     expect(isShown("stamp-later")).toBe(true);
     expect($("row-later").hasClass("is-saved")).toBe(true);
     expect($("status").textContent).toBe("Saved");
+    expect($("foot-default").visibleText).toBe("? for keys esc close"); // no timing copy
     expect($("row-read").disabled).toBe(true);
 
     await wait(349);
@@ -439,7 +440,7 @@ describe("R sends read and offers Favorite", () => {
     expect(isShown("row-favorite")).toBe(true);
     expect($("row-favorite").disabled).toBe(false);
     expect($("row-favorite").visibleText).toBe("Favorite F");
-    expect($("hint").textContent).toBe("F within 1.5 s, or any key");
+    expect($("foot-default").visibleText).toBe("? for keys esc close"); // no how-it-works copy
   });
 
   it("F within 1.5 s sends favorite after read, then stamps the Favorite row once both replies are ok", async () => {
