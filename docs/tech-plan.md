@@ -103,6 +103,7 @@ Stored URL: canonical, host lowercased, `m.` and `mobile.` dropped, `www.` as gi
 - Rejected fxtwitter and iTunes lookup (round 1): extra M1 paths; `X post <id>` and HTML cover them; reopen if the debug route disagrees.
 - Door: one-way for fallback shape and UA; chain order two-way. Confirm by: M1 fixtures and the debug route over L3 URLs.
 - Status: revised round 1, 2026-11-07: fxtwitter and iTunes cut.
+- Status: revised in build, 2026-11-08 (SAT-12): a null from a media oEmbed falls through to the page lookup (TikTok's oEmbed stopped returning titles).
 - Status: decided (user review, 2026-11-07).
 
 ### D-4 Fix the /save contract, CORS and auth

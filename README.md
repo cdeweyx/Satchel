@@ -32,6 +32,8 @@ Merged on `main`:
 - Notion client over plain `fetch`, with no retry (SAT-3).
 - Fallback titles built from the URL (SAT-5).
 - Router with key auth, body validation, CORS preflight on `/save` and `/health`, and JSON errors for every code (SAT-4).
+- Title lookups: X via oEmbed with a Twitterbot fallback (SAT-8), page titles via HTMLRewriter with a crawler UA (SAT-10), media via oEmbed (SAT-9).
+- Lookups wired into the background enrich: one lookup stage (5 s cap), a re-read, then one patch that writes the looked-up title only if the Name is unchanged since create, and swaps an X URL to oEmbed's canonical (SAT-12). `/save` (SAT-6) runs it in `waitUntil` after a create; once deployed, titles land about 2 s after a save.
 
 Left in M0: the `/save` handler that writes the row (SAT-6), then the first deploy and real-database check (SAT-7). Today `POST /save` checks the key and body, then returns 500 `internal` from the stub handler. `GET /health` answers keyless liveness.
 
@@ -52,7 +54,8 @@ Roadmap:
 
 - `src/index.ts`: the Worker entry and router. Checks the `x-satchel-key` header in constant time, validates the save body, answers CORS preflights and 405s.
 - `src/save.ts`: `POST /save` (stub until SAT-6).
-- `src/enrich.ts`: the background title lookup and Claude call (stub until M1 / M2).
+- `src/enrich.ts`: the background enrich: lookup stage, Claude slot (empty until M2), re-read, one guarded patch. Never throws; Notion failures log `enrich_failed`.
+- `src/title/`: title lookups. `x.ts` (oEmbed, then Twitterbot), `media.ts` (oEmbed), `page.ts` (HTMLRewriter, crawler UA), and `index.ts`, which dispatches by link kind (media falls through to the page read when oEmbed has no title).
 - `src/health.ts`: `GET /health` (keyless liveness today; keyed probes in M2).
 - `src/contract.ts`: request and response types, error codes, and `json()`, which builds every response.
 - `src/canonical.ts`: URL canonicalization, dedupe keys and the Media flag. Pure, no network.
