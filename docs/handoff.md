@@ -22,8 +22,8 @@ Standalone Worker, not a route on conordewey.com (decided: keep it separate).
 
 ## Notion database (already exists, don't add fields)
 
-- Database: `b456e0c848bb4c899ee4aa606fc05261` ("📃 Articles")
-- Data source: `e068642e-726d-4c43-8047-e6d9e8793037` (check the current Notion API version; newer versions create pages under a data source, not a database)
+- Database: `NOTION_DATABASE_ID` (in the secrets file) ("📃 Articles")
+- Data source: `NOTION_DATA_SOURCE_ID` (in the secrets file) (check the current Notion API version; newer versions create pages under a data source, not a database)
 - The "Satchel" connection (API token type) needs access to the database: confirm it, and if the API returns 404, tell me to add it via ••• → Connections.
 
 | Property | Type | Satchel writes |
