@@ -111,6 +111,23 @@ describe("success rule: only a JSON body with ok: true", () => {
     expect(await mock.sendMessage({ type: "save", ...page })).toEqual({ ok: false, error: "unexpected response" });
     expect(seen).toEqual([]);
   });
+
+  it("a Worker URL with no key is a failure and sends nothing", async () => {
+    await boot({ workerUrl: WORKER });
+    onSave(() => HttpResponse.json({ ok: true, id: "page-1" }));
+    expect(await mock.sendMessage({ type: "save", ...page })).toEqual({ ok: false, error: "unexpected response" });
+    expect(seen).toEqual([]);
+  });
+});
+
+describe("badge API failure", () => {
+  it("never turns a landed save into a failure", async () => {
+    onSave(() => HttpResponse.json({ ok: true, id: "page-1" }));
+    const action = (mock.chrome as { action: { setBadgeText: () => Promise<void> } }).action;
+    action.setBadgeText = () => Promise.reject(new Error("badge API down"));
+    expect(await mock.sendMessage({ type: "save", ...page })).toEqual({ ok: true, id: "page-1" });
+    expect(seen).toHaveLength(1);
+  });
 });
 
 describe("badge", () => {

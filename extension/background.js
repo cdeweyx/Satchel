@@ -10,6 +10,9 @@
 //   Port     While open, the popup holds chrome.runtime.connect({name: "popup"}).
 //            A failure that arrives with no "popup" port connected sets a red "!" badge
 //            on the toolbar icon; the next successful save clears it.
+//            The popup must reconnect the "popup" port if it disconnects while the
+//            popup is open (an idle MV3 worker can be shut down after ~30 s, which
+//            drops the port).
 //   Settings chrome.storage.local {workerUrl, key}, written by the options page.
 //
 // Saves for the same URL run one after another, in the order they arrive, so a
@@ -49,7 +52,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 function enqueue(message) {
   const key = String(message.url);
   const previous = queues.get(key) ?? Promise.resolve();
-  // A failed badge call mustn't stall the next save for this URL.
+  // Belt and braces: nothing upstream should reject, but a rejection mustn't stall
+  // the next save for this URL.
   const run = previous.catch(() => {}).then(() => saveAndBadge(message));
   queues.set(key, run);
   const forget = () => {
@@ -61,11 +65,16 @@ function enqueue(message) {
 
 async function saveAndBadge(message) {
   const reply = await save(message);
-  if (reply.ok) {
-    await chrome.action.setBadgeText({ text: "" });
-  } else if (popupPorts === 0) {
-    await chrome.action.setBadgeBackgroundColor({ color: BADGE_RED });
-    await chrome.action.setBadgeText({ text: BADGE_FAILED });
+  // The badge is a hint; a badge API failure must never change the save's reply.
+  try {
+    if (reply.ok) {
+      await chrome.action.setBadgeText({ text: "" });
+    } else if (popupPorts === 0) {
+      await chrome.action.setBadgeBackgroundColor({ color: BADGE_RED });
+      await chrome.action.setBadgeText({ text: BADGE_FAILED });
+    }
+  } catch {
+    // Leave the badge as it was.
   }
   return reply;
 }
