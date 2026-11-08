@@ -36,6 +36,7 @@ Merged on `main`:
 - Title lookups: X via oEmbed with a Twitterbot fallback (SAT-8), page titles via HTMLRewriter with a crawler UA (SAT-10), media via oEmbed (SAT-9).
 - Lookups wired into the background enrich: one lookup stage (5 s cap), a re-read, then one patch that writes the looked-up title only if the Name is unchanged since create, and swaps an X URL to oEmbed's canonical only if the URL is unchanged too (SAT-12).
 - Keyed `/health` probes Notion, Claude and X oEmbed (503 names the failing one) (SAT-16).
+- Key-gated `GET /debug/title?url=` runs the real title lookup on the canonical URL (5 s cap) and returns `{ok, kind, stored, title, source, bytesRead, ms}`, to check Cloudflare egress from curl (SAT-11).
 - Claude in the background enrich: tag options read live from the schema, Claude's title and 1 to 3 guarded tag ids in the same one patch (Tags only on an untagged row), a 22 s deadline that abandons Claude, and one re-patch when a tag patch hits a stale cache (SAT-15).
 
 `POST /save` dedupes and creates or patches rows (tested against mocked Notion); the first real-database check is SAT-7. A Notion error returns 502 `notion_<code>` with no retry. After a create, enrich looks up the real title in the background, then Claude Haiku cleans the title (Title Case) and picks 1 to 3 tags from the live Tags options about 2 s after a save; on any Claude failure the looked-up title still lands. A client title goes through Claude too, and a Name edited in Notion since the save is never overwritten. `GET /health` answers keyless liveness; with the key it probes Notion, Claude and X oEmbed (3 s each, in parallel) and returns 503 naming the failing one, and a wrong key gets 401.
@@ -57,7 +58,7 @@ Roadmap:
 
 ## Repo layout
 
-- `src/index.ts`: the Worker entry and router. Checks the `x-satchel-key` header in constant time, validates the save body, answers CORS preflights and 405s.
+- `src/index.ts`: the Worker entry and router. Checks the `x-satchel-key` header in constant time, validates the save body, answers CORS preflights and 405s. Also serves the key-gated `GET /debug/title?url=`.
 - `src/save.ts`: `POST /save`: dedupe query, then create or patch.
 - `src/enrich.ts`: the background enrich: lookup stage, Claude slot (empty until M2), re-read, one guarded patch. Never throws; Notion failures log `enrich_failed`.
 - `src/title/`: title lookups. `x.ts` (oEmbed, then Twitterbot), `media.ts` (oEmbed), `page.ts` (HTMLRewriter, crawler UA), and `index.ts`, which dispatches by link kind (media falls through to the page read when oEmbed has no title).

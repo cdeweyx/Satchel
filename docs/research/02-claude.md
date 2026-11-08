@@ -137,7 +137,7 @@ Prevention: when you look at the key in the Console, check its **Expires** colum
 - **`output_tokens_details.thinking_tokens`** is in `usage`; log it if you ever want to confirm `low` is holding.
 - **No `temperature`, `top_p`, `top_k`** on Haiku 5.5 (non-default values 400). Don't send them.
 - **No assistant prefill** (400). Structured outputs replace it.
-- **SDK auth header is `x-api-key`** (the 401 body says `invalid x-api-key`); `ANTHROPIC_API_KEY` as a Wrangler secret plus `new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })` is the shape. Don't rely on `process.env`; it doesn't exist in Workers without `nodejs_compat`.
+- **SDK auth header:** the 401 body says `invalid x-api-key`, but `@anthropic-ai/sdk` 1.6.0 sends `apiKey` as `Authorization: Bearer <key>` (corrected in build, 2026-11-08, SAT-14: checked in the installed `client.mjs` and the live `/v1/models` probe); `ANTHROPIC_API_KEY` as a Wrangler secret plus `new Anthropic({ apiKey: env.ANTHROPIC_API_KEY })` is the shape. Don't rely on `process.env`; it doesn't exist in Workers without `nodejs_compat`.
 - **SDK timeout unit is milliseconds** in TypeScript. Default 10 min; set `timeout: 20_000` so a hung call can't eat the Worker's `waitUntil` budget (30 s CPU is irrelevant here, but wall clock still matters on free plan).
 - **Pricing has two rate cards** split at a 100,000-token prompt. Irrelevant at ~1k tokens, but don't paste page bodies into the prompt.
 - **Repo has no `.gitignore` yet.** `.context/` holds `node_modules/`, `dev.log`, and bundles from these probes. Add `.context/` to `.gitignore` before the first commit.
