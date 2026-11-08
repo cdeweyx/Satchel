@@ -48,7 +48,7 @@ Saving a URL that's already in the database updates its status, so saving it as 
 
 1. `POST /save` checks the `x-satchel-key` header, cleans the URL, and looks for an existing row.
 2. A new URL gets a new row (your title if you sent one, otherwise one built from the URL). A known URL gets its status updated. Then the Worker answers.
-3. In the background, it looks up the real title (the page's `<title>`, or oEmbed for X posts, YouTube, Spotify and similar), asks Claude Haiku for a clean title and tags, and updates the row once. A new row also gets the article's preview image (or, without one, a one-paragraph summary) in its page body when the page has one, so Notion's gallery cards show it.
+3. In the background, it looks up the real title (the page's `<title>`, or oEmbed for X posts, YouTube, Spotify and similar), asks Claude Haiku for a clean title and tags, and updates the row once. A new row also gets the article's preview image (or, without one, a one-paragraph summary) in its page body when the page has one, so Notion's gallery cards show it. When the Worker can't read a page itself (Substack often turns it away), or finds no image on it, a save from Chrome falls back to the image or description the extension read from the open tab. An image always beats a summary.
 
 If Claude fails, the looked-up title still lands. If you've edited the title in Notion since saving, Satchel leaves it alone.
 
@@ -148,7 +148,7 @@ If Claude fails, the looked-up title still lands. If you've edited the title in 
      -d '{"url": "https://example.com/post", "status": "later"}'
    ```
 
-   You should get `{"ok":true,"id":"<notion page id>"}` and a new row in Notion. The body is `{ "url", "title"?, "status" }`: `title` is optional, and `status` is `later`, `read` or `favorite`.
+   You should get `{"ok":true,"id":"<notion page id>"}` and a new row in Notion. The body is `{ "url", "title"?, "status", "image"?, "description"? }`: `title` is optional, and `status` is `later`, `read` or `favorite`. `image` (an https URL) and `description` are the page's preview, which the Chrome extension reads from the tab; the Worker uses them only when it can't get a preview itself, and drops an invalid one without failing the save.
 
 ### What `/health` tells you
 
@@ -219,7 +219,7 @@ To save, tap Share, then **Satchel**, then **Send to inbox**, **Mark as archived
 
 ## See it as a gallery in Notion
 
-Each new row gets the article's preview image as its page body when the page has one, or a short summary when it has only a description. An X post without a photo gets nothing. Add a **Gallery** view to your database and set its card preview to **Page content**, and each card shows that image. Rows that were in the database before Satchel don't have a page body.
+Each new row gets the article's preview image as its page body when the page has one, or a short summary when it has only a description. Saved from Chrome, a page the Worker can't read (or one with no preview tags) still gets the image, description or first paragraph the extension read from the tab. An X post without a photo gets nothing. Add a **Gallery** view to your database and set its card preview to **Page content**, and each card shows that image. Rows that were in the database before Satchel don't have a page body.
 
 ## Configure
 

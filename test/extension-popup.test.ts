@@ -8,6 +8,8 @@
 // chrome.storage comes from test/chrome-mock.ts. The popup side of chrome.runtime
 // (sendMessage, connect, openOptionsPage) and chrome.tabs aren't in that mock, so they're
 // added here: sendMessage records each message and hands the test its reply to resolve.
+// SAT-58: chrome.scripting.executeScript runs popup.js's real injected function against a
+// page parsed from a fixture with the same small DOM, so tests check what it reads.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createChromeMock } from "./chrome-mock";
 import popupHtml from "../extension/popup.html?raw";
@@ -142,6 +144,23 @@ class FakeElement {
     if (!this.rendered) return;
     for (const fn of this.listeners.get("pointerenter") ?? []) fn(makeEvent("pointerenter", this));
   }
+  // Descendants matching `tag` or `tag[attr="value"]`, in document order: all the injected
+  // preview read (SAT-58) asks of a page.
+  querySelectorAll(selector: string): FakeElement[] {
+    const m = /^([a-z][\w-]*)(?:\[([\w:-]+)="([^"]*)"\])?$/i.exec(selector);
+    if (!m) throw new Error(`unsupported selector: ${selector}`);
+    const [, tag, attr, value] = m;
+    const out: FakeElement[] = [];
+    const walk = (el: FakeElement) => {
+      for (const c of el.children) {
+        if (!(c instanceof FakeElement)) continue;
+        if (c.tagName === tag!.toLowerCase() && (attr === undefined || c.getAttribute(attr) === value)) out.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return out;
+  }
   find(id: string): FakeElement | null {
     if (this.id === id) return this;
     for (const c of this.children) {
@@ -159,8 +178,17 @@ class FakeDocument {
   activeElement: FakeElement | null = null;
   listeners = new Map<string, Listener[]>();
 
-  constructor(html: string) {
+  constructor(
+    html: string,
+    public baseURI = "chrome-extension://satchel/popup.html",
+  ) {
     this.root = parseHtml(html, this);
+  }
+  querySelector(selector: string) {
+    return this.root.querySelectorAll(selector)[0] ?? null;
+  }
+  get body() {
+    return this.querySelector("body");
   }
   getElementById(id: string) {
     return this.root.find(id);
@@ -203,7 +231,21 @@ function parseHtml(html: string, doc: FakeDocument): FakeElement {
 
 const WORKER = "https://satchel.example.workers.dev";
 const KEY = "test-satchel-key";
-const TAB = { url: "https://www.lennysnewsletter.com/p/how-linear-builds-product", title: "How Linear Builds Product" };
+const TAB = {
+  id: 42,
+  url: "https://www.lennysnewsletter.com/p/how-linear-builds-product",
+  title: "How Linear Builds Product",
+};
+// The tab's page by default: no preview tags and no long paragraph, so the read finds nothing
+// and saves carry only url, title and status, as before SAT-58.
+const BARE_PAGE = "<html><head><title>A page</title></head><body><p>Short.</p></body></html>";
+
+type Injection = {
+  target: { tabId: number };
+  func: (...args: unknown[]) => unknown;
+  args?: unknown[];
+  injectImmediately?: boolean;
+};
 
 interface Pending {
   message: Record<string, unknown>;
@@ -226,6 +268,7 @@ let ports: FakePort[];
 let closedAt: number | null;
 let optionsOpened: number;
 let openedAt: number;
+let injections: Injection[];
 
 const $ = (id: string) => {
   const el = doc.getElementById(id);
@@ -263,22 +306,45 @@ async function click(id: string) {
   await flush();
 }
 
+// Runs the injected function the way Chrome does: in the page (here, `document` swapped for
+// the page's), with its result structured-cloned back in a one-frame results array.
+function runInPage(pageHtml: string, url: string) {
+  return async (injection: Injection) => {
+    injections.push(injection);
+    const page = new FakeDocument(pageHtml, url);
+    const popupDoc = (globalThis as any).document;
+    (globalThis as any).document = page;
+    try {
+      const result = injection.func(...(injection.args ?? []));
+      return [{ frameId: 0, documentId: "page-doc", result: JSON.parse(JSON.stringify(result ?? null)) }];
+    } finally {
+      (globalThis as any).document = popupDoc;
+    }
+  };
+}
+
 async function open({
   storage = { workerUrl: WORKER, key: KEY } as Record<string, unknown>,
-  tab = TAB as { url?: string; title?: string },
+  tab = TAB as { id?: number; url?: string; title?: string },
   reducedMotion = false,
+  pageHtml = BARE_PAGE,
+  // undefined: run the real read against pageHtml; null: no chrome.scripting at all.
+  executeScript = undefined as ((injection: Injection) => unknown) | null | undefined,
 } = {}) {
   doc = new FakeDocument(popupHtml as string);
   sent = [];
   ports = [];
   closedAt = null;
   optionsOpened = 0;
+  injections = [];
 
   const mock = createChromeMock(storage);
   const chrome = mock.chrome as any;
   chrome.runtime.lastError = undefined;
+  // A closed popup is torn down (SAT-58 review): nothing it tries to send after window.close()
+  // leaves it, so a save that wasn't out by then is lost.
   chrome.runtime.sendMessage = (message: Record<string, unknown>) =>
-    new Promise((resolve, reject) => sent.push({ message, resolve, reject }));
+    closedAt !== null ? new Promise(() => {}) : new Promise((resolve, reject) => sent.push({ message, resolve, reject }));
   chrome.runtime.connect = ({ name }: { name: string }) => {
     const listeners: (() => void)[] = [];
     const port: FakePort = {
@@ -306,6 +372,7 @@ async function open({
       return [tab];
     },
   };
+  if (executeScript !== null) chrome.scripting = { executeScript: executeScript ?? runInPage(pageHtml, tab.url ?? "") };
 
   vi.stubGlobal("chrome", chrome);
   vi.stubGlobal("document", doc);
@@ -957,5 +1024,176 @@ describe("popup.css", () => {
     const css = (popupCss as string).replace(/\/\*[\s\S]*?\*\//g, "");
     expect(css.match(/#[0-9a-f]{3,8}\b/gi)).toBeNull();
     expect(css.match(/font-size:\s*[\d.]+px/gi)).toBeNull();
+  });
+});
+
+// ---------- SAT-58: the tab's preview rides along with the save ----------
+
+describe("SAT-58: the save carries the tab's preview", () => {
+  const COVER = "https://substackcdn.com/image/fetch/w_1200,h_600,c_fill/cover.png";
+  const LONG =
+    "Special thanks to the many people who reviewed this post. One of the most interesting questions is how to keep the base layer simple.";
+  const page = (head: string, body = "") => `<html><head><title>A page</title>${head}</head><body>${body}</body></html>`;
+
+  it("a Substack post: og:image and og:description from the tab go with L", async () => {
+    await open({
+      pageHtml: page(
+        `<meta property="og:image" content="${COVER}">` +
+          '<meta name="twitter:image" content="https://substackcdn.com/twitter.png">' +
+          '<meta property="og:description" content="How Linear plans,\n   builds and ships.">',
+      ),
+    });
+    expect(injections.map((i) => i.target)).toEqual([{ tabId: 42 }]);
+    await press("l");
+    expect(messages()).toEqual([{ ...save("later"), image: COVER, description: "How Linear plans, builds and ships." }]);
+  });
+
+  it("R and then F both carry it", async () => {
+    await open({ pageHtml: page(`<meta property="og:image" content="${COVER}">`) });
+    await press("r");
+    await press("f");
+    expect(messages()).toEqual([
+      { ...save("read"), image: COVER },
+      { ...save("favorite"), image: COVER },
+    ]);
+  });
+
+  it("a relative og:image is made absolute against the page URL", async () => {
+    await open({ pageHtml: page('<meta property="og:image" content="/img/cover.png?w=1200&amp;h=630">') });
+    await press("l");
+    expect(messages()[0]!.image).toBe("https://www.lennysnewsletter.com/img/cover.png?w=1200&h=630");
+  });
+
+  it("an http: og:image is skipped for the https twitter:image", async () => {
+    await open({
+      pageHtml: page(
+        '<meta property="og:image" content="http://cdn.example.com/a.png">' +
+          '<meta property="twitter:image" content="https://cdn.example.com/b.png">',
+      ),
+    });
+    await press("l");
+    expect(messages()[0]!.image).toBe("https://cdn.example.com/b.png");
+  });
+
+  it.each([
+    ["only an http: image", '<meta property="og:image" content="http://cdn.example.com/a.png">'],
+    ["a data: URL", '<meta property="og:image" content="data:image/png;base64,iVBORw0KGgo=">'],
+    ["an image over 2000 characters", `<meta property="og:image" content="https://cdn.example.com/${"a".repeat(2000)}.png">`],
+  ])("%s: no image in the message", async (_name, head) => {
+    await open({ pageHtml: page(head) });
+    await press("l");
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  it("no og:description: the meta description", async () => {
+    await open({ pageHtml: page('<meta name="description" content="The meta one.">', `<article><p>${LONG}</p></article>`) });
+    await press("l");
+    expect(messages()[0]!.description).toBe("The meta one.");
+  });
+
+  it("no preview tags (vitalik.eth.limo style): the first real paragraph of the article, whitespace collapsed", async () => {
+    await open({
+      pageHtml: page(
+        "",
+        "<header><p>Navigation and a byline that is long enough to count if it were in the article, more than eighty characters.</p></header>" +
+          `<article><p>Jan 1, 2025</p><p>See <a href="/x">all posts</a></p><p>Special thanks to the many people\n   who reviewed this post. One of the most interesting questions is how to keep the base layer simple.</p><p>Second paragraph that never gets read because the first one already qualified for the card.</p></article>`,
+      ),
+    });
+    await press("l");
+    expect(messages()).toEqual([{ ...save("later"), description: LONG }]);
+  });
+
+  it("no article: main, then body", async () => {
+    await open({ pageHtml: page("", `<div><p>Short.</p><p>${LONG}</p></div>`) });
+    await press("l");
+    expect(messages()[0]!.description).toBe(LONG);
+  });
+
+  it("a description is cut to 1000 characters", async () => {
+    await open({ pageHtml: page(`<meta property="og:description" content="${"é".repeat(1500)}">`) });
+    await press("l");
+    expect(messages()[0]!.description).toBe("é".repeat(1000));
+  });
+
+  it.each([
+    ["executeScript rejects (chrome:// page, Web Store, PDF viewer)", () => Promise.reject(new Error("Cannot access a chrome:// URL"))],
+    ["executeScript throws", () => {
+      throw new Error("Cannot access contents of the page");
+    }],
+    ["the read comes back empty (it threw in the page)", () => Promise.resolve([{ frameId: 0, result: null }])],
+    ["no results at all", () => Promise.resolve([])],
+    ["the result is the wrong shape", () => Promise.resolve([{ frameId: 0, result: { image: 42, description: ["x"] } }])],
+  ])("%s: the save goes at once, without image or description", async (_name, executeScript) => {
+    await open({ executeScript });
+    await press("l");
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  it("no chrome.scripting at all (the permission missing): the save goes at once, as before", async () => {
+    await open({ executeScript: null });
+    expect((globalThis as any).chrome.scripting).toBeUndefined();
+    await press("l");
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  // Review fix round: replaced "L right away waits until 300 ms after open". A save never
+  // waits for the preview.
+  it("a slow read: L right away sends at once without it, and the late result isn't sent", async () => {
+    let finish!: (v: unknown) => void;
+    await open({ executeScript: () => new Promise((resolve) => (finish = resolve)) });
+    await press("l");
+    expect(messages()).toEqual([save("later")]);
+    expect(keycapFilled("later")).toBe(true);
+    finish([{ frameId: 0, result: { image: COVER } }]); // too late to count
+    await flush();
+    await reply(0, { ok: true, id: "page-1" });
+    expect(isShown("stamp-later")).toBe(true);
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  it.each([
+    ["esc", () => press("Escape")],
+    ["a click away (Chrome closes the popup)", async () => (globalThis as any).window.close()],
+  ])("L, then %s before the preview settles: the save still went out", async (_name, close) => {
+    await open({ executeScript: () => new Promise(() => {}) });
+    await press("l");
+    await close();
+    expect(closedAt).not.toBeNull();
+    await wait(1000);
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  it("R, then esc before the preview settles: the read still went out", async () => {
+    await open({ executeScript: () => new Promise(() => {}) });
+    await press("r");
+    await press("Escape"); // ends the favorite window
+    await press("Escape"); // closes
+    expect(closedAt).not.toBeNull();
+    expect(messages()).toEqual([save("read")]);
+  });
+
+  it("asks Chrome to inject at once, so a tab still loading doesn't wait for document_idle", async () => {
+    await open();
+    expect(injections).toHaveLength(1);
+    expect(injections[0]).toMatchObject({ target: { tabId: 42 }, injectImmediately: true });
+  });
+
+  it("a read that never answers doesn't hold a later press at all", async () => {
+    await open({ executeScript: () => new Promise(() => {}) });
+    await wait(1000);
+    await press("l");
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  it("a tab with no id: no read, the save goes as before", async () => {
+    await open({ tab: { url: TAB.url, title: TAB.title }, pageHtml: page(`<meta property="og:image" content="${COVER}">`) });
+    await press("l");
+    expect(injections).toEqual([]);
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  it("setup missing: nothing is read from the page", async () => {
+    await open({ storage: {}, pageHtml: page(`<meta property="og:image" content="${COVER}">`) });
+    expect(injections).toEqual([]);
   });
 });

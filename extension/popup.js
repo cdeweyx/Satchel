@@ -3,8 +3,15 @@
 // with a click, and arrow keys / Tab / Enter work on the rows.
 //
 // The service worker owns every save (contract at the top of background.js). The popup
-// only sends {type: "save", url, title, status}, shows the reply, and holds the "popup"
-// port while it's open so a failure it can show doesn't also badge the toolbar icon.
+// only sends {type: "save", url, title, status, image, description}, shows the reply, and
+// holds the "popup" port while it's open so a failure it can show doesn't also badge the
+// toolbar icon.
+//
+// SAT-58: on open, the popup quietly reads the page's preview (og:image, a description or
+// the first real paragraph) from the tab, and a save carries it so the Worker has a fallback
+// when it can't read the page itself. A save never waits for it: a press sends at once with
+// the preview if the read has finished, and without it (exactly as before) if it hasn't or
+// it failed. So closing the popup can't lose a save to a slow read.
 
 const FAVORITE_WINDOW_MS = 3000;
 const CLOSE_AFTER_MS = 600; // after the reply: the save beat, then close
@@ -23,6 +30,7 @@ const rowOf = (status) => $(`row-${status}`);
 // loading | setup | rest | window (R's favorite window) | pending | saved | error | closed
 let state = "loading";
 let page = { url: "", title: "" };
+let preview = {}; // the tab's {image?, description?} once the read has finished
 let port = null;
 let portOpenedAt = 0;
 let reconnects = 0;
@@ -72,10 +80,14 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(connectPort, delay);
 }
 
-// Always resolves, to {ok: true, id} or {ok: false, error}.
+// Always resolves, to {ok: true, id} or {ok: false, error}. The message goes out now, with
+// whatever preview has already arrived.
 function send(status) {
+  const { image, description } = preview;
   const message = { type: "save", url: page.url, status };
   if (page.title) message.title = page.title;
+  if (image) message.image = image;
+  if (description) message.description = description;
   let reply;
   try {
     reply = chrome.runtime.sendMessage(message);
@@ -333,6 +345,81 @@ function decodeSafe(s) {
   }
 }
 
+// ---- the tab's preview (SAT-58) ----
+
+// Runs inside the page (chrome.scripting serializes it), so it uses nothing from this file.
+// Returns {image?, description?}: the first https og:image or twitter:image, absolute, at
+// most 2000 characters; og:description, else meta description, else the first paragraph of
+// at least 80 characters in article, main or body. Text has its whitespace collapsed and is
+// cut to 1000 characters.
+function pagePreview() {
+  const MAX_URL = 2000;
+  const MAX_TEXT = 1000;
+  const MIN_PARAGRAPH = 80;
+  const clean = (s) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim() : "");
+  const content = (selector) => clean(document.querySelector(selector)?.getAttribute("content"));
+  const out = {};
+
+  for (const selector of ['meta[property="og:image"]', 'meta[name="twitter:image"]', 'meta[property="twitter:image"]']) {
+    const raw = content(selector);
+    if (!raw) continue;
+    try {
+      const url = new URL(raw, document.baseURI);
+      if (url.protocol === "https:" && url.href.length <= MAX_URL) {
+        out.image = url.href;
+        break;
+      }
+    } catch {
+      // Not a URL; try the next tag.
+    }
+  }
+
+  let text = content('meta[property="og:description"]') || content('meta[name="description"]');
+  if (!text) {
+    for (const root of [document.querySelector("article"), document.querySelector("main"), document.body]) {
+      if (!root) continue;
+      for (const p of root.querySelectorAll("p")) {
+        const t = clean(p.textContent);
+        if (t.length >= MIN_PARAGRAPH) {
+          text = t;
+          break;
+        }
+      }
+      if (text) break;
+    }
+  }
+  if (text) out.description = Array.from(text).slice(0, MAX_TEXT).join("").trim();
+  return out;
+}
+
+// Starts the read and stores its result in `preview` when it lands. Any failure (chrome://
+// pages, the PDF viewer, the Web Store, injection denied, a throw) leaves `preview` empty.
+// injectImmediately: a tab that's still loading answers now, not at document_idle.
+function readPreview(tabId) {
+  if (typeof tabId !== "number") return;
+  try {
+    Promise.resolve(
+      chrome.scripting.executeScript({ target: { tabId }, func: pagePreview, injectImmediately: true }),
+    ).then(
+      (results) => {
+        preview = previewFields(results && results[0] && results[0].result);
+      },
+      () => {},
+    );
+  } catch {
+    // No preview; saves go without one.
+  }
+}
+
+// Only non-empty strings travel; the Worker checks them again.
+function previewFields(result) {
+  const out = {};
+  if (!result || typeof result !== "object") return out;
+  if (typeof result.image === "string" && result.image) out.image = result.image;
+  if (typeof result.description === "string" && result.description) out.description = result.description;
+  return out;
+}
+
 async function init() {
   connectPort();
   document.addEventListener("keydown", onKey);
@@ -366,6 +453,7 @@ async function init() {
     $("setup").hidden = false;
     $("setup-link").focus();
   } else {
+    readPreview(tab.id);
     setState("rest");
     $("rows").hidden = false;
     rowOf("later").focus();

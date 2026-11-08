@@ -2,6 +2,8 @@
 // article's preview image or, failing that, its summary. Pure: lookup result in, block out.
 // The background task appends it (enrich.ts); SAT-49's backfill imports it unchanged.
 // SAT-52: an X post with no photo gets its post text instead, links stripped.
+// SAT-58: a page whose lookup has no image falls back to what the Chrome extension read from
+// the open tab (clientPreviewBlock; the order is bodyBlock's in enrich.ts).
 
 import { type BodyBlock, imageBlock, paragraphBlock } from "./notion";
 import type { LookupResult } from "./title";
@@ -20,6 +22,12 @@ export function httpsUrl(raw: string | null | undefined, base?: string): string 
   } catch {
     return null;
   }
+}
+
+// An image URL the body can use: absolute https, at most 2000 characters. Null otherwise.
+export function usableImage(raw: string | null | undefined): string | null {
+  const image = httpsUrl(raw);
+  return image && image.length <= MAX_URL ? image : null;
 }
 
 // X's post photos live at pbs.twimg.com/media/…; avatars (profile_images), video thumbs and
@@ -78,11 +86,23 @@ export function summary(text: string, max = SUMMARY_CHARS): string {
  * gets a paragraph.
  */
 export function previewBlock(lookup: LookupResult): BodyBlock | null {
-  const image = httpsUrl(lookup.image);
-  if (image && image.length <= MAX_URL) return imageBlock(image);
+  const image = usableImage(lookup.image);
+  if (image) return imageBlock(image);
   const isX = lookup.source === "x-oembed" || lookup.source === "x-twitterbot";
   if (lookup.source !== "page" && !isX) return null;
   const raw = isX ? xPostText(lookup.description, lookup.links) : (lookup.description ?? "");
   const text = raw ? summary(raw) : "";
+  return text ? paragraphBlock(text) : null;
+}
+
+/**
+ * SAT-58: the block from what the Chrome extension read off the open tab (save.ts already
+ * cleaned both), for a page whose own lookup has no image. The same rules as a page lookup:
+ * an image block for a usable image, else one summary paragraph of the description, else null.
+ */
+export function clientPreviewBlock(image: string | undefined, description: string | undefined): BodyBlock | null {
+  const url = usableImage(image);
+  if (url) return imageBlock(url);
+  const text = description ? summary(description) : "";
   return text ? paragraphBlock(text) : null;
 }

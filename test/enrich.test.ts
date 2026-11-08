@@ -2515,3 +2515,265 @@ describe("SAT-56: a failed patch or re-read writes no page body", () => {
     ]);
   });
 });
+
+describe("SAT-58: a page the lookup gives nothing for falls back to the extension's preview", () => {
+  const AT_START = { position: { type: "start" } };
+  const imageBody = (url: string) => ({
+    children: [{ type: "image", image: { type: "external", external: { url } } }],
+    ...AT_START,
+  });
+  const paragraphBody = (content: string) => ({
+    children: [{ type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content } }] } }],
+    ...AT_START,
+  });
+  const route = (s: Seen) => `${s.method} ${s.url.split("?")[0]}`;
+  const appends = (seen: Seen[]) => seen.filter((s) => s.url === BODY_URL).map((s) => s.body);
+
+  const POST = "https://www.lennysnewsletter.com/p/how-linear-builds-product";
+  const COVER = "https://substackcdn.com/image/fetch/w_1200,h_600,c_fill/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fcover.png";
+  const FIRST_PARAGRAPH =
+    "Special thanks to the many people who reviewed this post. One of the most interesting questions in the ecosystem is how to keep the base layer simple while letting everything above it grow.";
+  const substackJob = (over: Partial<EnrichJob> = {}): EnrichJob => ({
+    pageId: PAGE_ID,
+    storedUrl: POST,
+    kind: "page",
+    fallbackTitle: "How linear builds product · lennysnewsletter.com",
+    ...over,
+  });
+
+  // Substack's answer to an uncached page read: 429 at once, no Retry-After.
+  function substack429(record: Record_, url = POST) {
+    network.use(
+      http.get(url, async ({ request }) => {
+        await record(request);
+        return new HttpResponse("Too Many Requests", { status: 429, headers: { "content-type": "text/plain" } });
+      }),
+    );
+  }
+
+  function recordBody(record: Record_) {
+    network.use(
+      http.patch(BODY_URL, async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ object: "list", results: [] });
+      }),
+    );
+  }
+
+  it("page read 429s + client image: the one append is the client's image", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    substack429(record);
+    mockNotion(record, { name: "How Linear Builds Product", url: POST });
+    recordBody(record);
+
+    await runInWaitUntil(
+      substackJob({ clientTitle: "How Linear Builds Product", clientImage: COVER, clientDescription: "Loses to the image." }),
+    );
+
+    // A client title and no Claude (no tag options): nothing to patch, then the one append.
+    expect(seen.map(route)).toEqual([`GET ${POST}`, `GET ${PAGE_URL}`, `PATCH ${BODY_URL}`]);
+    expect(appends(seen)).toEqual([imageBody(COVER)]);
+    expect(logs().map((l) => l.event)).toEqual(["enrich"]);
+  });
+
+  it("page read 429s, no client image, a client description: one summary paragraph", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    substack429(record);
+    mockNotion(record, { name: "How Linear Builds Product", url: POST });
+    recordBody(record);
+
+    await runInWaitUntil(substackJob({ clientDescription: "How Linear plans, builds and ships, from the people who do it." }));
+
+    expect(appends(seen)).toEqual([paragraphBody("How Linear plans, builds and ships, from the people who do it.")]);
+  });
+
+  it("a page with no preview tags (vitalik.eth.limo style): the client's first paragraph, cut to about 300", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    const blog = "https://vitalik.eth.limo/general/2025/01/01/simple.html";
+    htmlPage(blog, record, "<html><head><title>Simplifying the L1</title></head><body><p>Hi.</p></body></html>");
+    mockNotion(record, { name: "Simple · vitalik.eth.limo", url: blog });
+    recordBody(record);
+
+    const long = `${FIRST_PARAGRAPH} ${FIRST_PARAGRAPH}`;
+    await runInWaitUntil(pageJob({ storedUrl: blog, fallbackTitle: "Simple · vitalik.eth.limo", clientDescription: long }));
+
+    const bodies = appends(seen) as { children: { paragraph: { rich_text: { text: { content: string } }[] } }[] }[];
+    expect(bodies).toHaveLength(1);
+    const text = bodies[0]!.children[0]!.paragraph.rich_text[0]!.text.content;
+    expect(text.startsWith("Special thanks to the many people")).toBe(true);
+    expect(text.endsWith("…")).toBe(true);
+    expect(Array.from(text).length).toBeLessThanOrEqual(301);
+  });
+
+  it("a page whose lookup has its own og:image: the lookup's image wins over a different client image", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(
+      POST,
+      record,
+      '<html><head><title>How Linear Builds Product</title><meta property="og:image" content="https://cdn.example.com/own.jpg"></head></html>',
+    );
+    mockNotion(record, { name: "How linear builds product · lennysnewsletter.com", url: POST });
+    recordBody(record);
+
+    await runInWaitUntil(substackJob({ clientImage: COVER, clientDescription: "Client text." }));
+
+    expect(appends(seen)).toEqual([imageBody("https://cdn.example.com/own.jpg")]);
+  });
+
+  // Fix round 1 (the user's ruling: an image if you can, else the text) replaced "the lookup's
+  // paragraph wins over a client image": an image beats text from either source.
+  it("a page whose lookup has only a description: the client's image wins over the lookup's paragraph", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(
+      POST,
+      record,
+      '<html><head><title>How Linear Builds Product</title><meta property="og:description" content="The page says this."></head></html>',
+    );
+    mockNotion(record, { name: "How linear builds product · lennysnewsletter.com", url: POST });
+    recordBody(record);
+
+    await runInWaitUntil(substackJob({ clientImage: COVER, clientDescription: "Client text." }));
+
+    expect(appends(seen)).toEqual([imageBody(COVER)]);
+  });
+
+  it("no image from either source: the lookup's paragraph wins over the client's", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(
+      POST,
+      record,
+      '<html><head><title>How Linear Builds Product</title><meta property="og:description" content="The page says this."></head></html>',
+    );
+    mockNotion(record, { name: "How linear builds product · lennysnewsletter.com", url: POST });
+    recordBody(record);
+
+    await runInWaitUntil(substackJob({ clientDescription: "Client text." }));
+
+    expect(appends(seen)).toEqual([paragraphBody("The page says this.")]);
+  });
+
+  it("page read 429s and the client sent nothing (a Shortcut save): no append, as before", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    substack429(record);
+    mockNotion(record, { name: "How linear builds product · lennysnewsletter.com", url: POST });
+    recordBody(record);
+
+    await runInWaitUntil(substackJob());
+
+    expect(seen.map(route)).toEqual([`GET ${POST}`, `GET ${PAGE_URL}`]);
+    expect(appends(seen)).toEqual([]);
+  });
+
+  it("an X link-only post with a client image: unchanged, no append", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed('<a href="https://t.co/Lv1eB0x">https://t.co/Lv1eB0x</a>'));
+    htmlPage(
+      `https://x.com/i/status/${X_ID}`,
+      record,
+      '<html><head><meta property="og:title" content="X"><meta property="og:image" content="https://abs.twimg.com/rweb/ssr/default/v2/og/image.png"></head></html>',
+    );
+    mockNotion(record, { name: `X post ${X_ID}` });
+    recordBody(record);
+
+    await runInWaitUntil(
+      xJob({ clientImage: "https://pbs.twimg.com/media/Client.jpg", clientDescription: "Client text for an X post." }),
+    );
+
+    expect(seen.map(route)).toContain(`PATCH ${PAGE_URL}`);
+    expect(appends(seen)).toEqual([]);
+  });
+
+  it("an X text post with a client image: still its own post text", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("How to Get Rich (without getting lucky)"));
+    mockNotion(record, { name: `X post ${X_ID}` });
+    recordBody(record);
+
+    await runInWaitUntil(xJob({ clientImage: "https://pbs.twimg.com/media/Client.jpg" }));
+
+    expect(appends(seen)).toEqual([paragraphBody("How to Get Rich (without getting lucky)")]);
+  });
+
+  it("a media link whose oEmbed and page both fail, with a client image: no append", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    const video = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    network.use(
+      http.get("https://www.youtube.com/oembed", async ({ request }) => {
+        await record(request);
+        return new HttpResponse(null, { status: 429 });
+      }),
+    );
+    substack429(record, video);
+    mockNotion(record, { name: "YouTube video dQw4w9WgXcQ", url: video });
+    recordBody(record);
+
+    await runInWaitUntil(
+      pageJob({
+        storedUrl: video,
+        kind: "media",
+        fallbackTitle: "YouTube video dQw4w9WgXcQ",
+        clientImage: "https://i.ytimg.com/vi/dQw4w9WgXcQ/client.jpg",
+        clientDescription: "Client text for a video.",
+      }),
+    );
+
+    expect(seen.map(route)).toContain(`GET ${PAGE_URL}`);
+    expect(appends(seen)).toEqual([]);
+  });
+
+  it("through /save: a Chrome save of a 429ing Substack post gets the client's image on its card", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    network.use(
+      http.post(`${API}/data_sources/${DS}/query`, async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ object: "list", results: [], has_more: false });
+      }),
+      http.post(`${API}/pages`, async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ object: "page", id: PAGE_ID, properties: {} });
+      }),
+    );
+    substack429(record);
+    mockNotion(record, { name: "How Linear Builds Product", url: POST });
+    recordBody(record);
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request("https://satchel.test/save", {
+        method: "POST",
+        headers: { "x-satchel-key": "test-satchel-key", "content-type": "application/json" },
+        body: JSON.stringify({
+          url: POST,
+          title: "How Linear Builds Product",
+          status: "later",
+          image: COVER,
+          description: "How Linear plans and ships.",
+        }),
+      }) as Request<unknown, IncomingRequestCfProperties>,
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    expect(await res.json()).toEqual({ ok: true, id: PAGE_ID });
+    expect(seen.map(route)).toEqual([
+      `POST ${API}/data_sources/${DS}/query`,
+      `POST ${API}/pages`,
+      `GET ${POST}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${BODY_URL}`,
+    ]);
+    expect(appends(seen)).toEqual([imageBody(COVER)]);
+  });
+});

@@ -24,7 +24,9 @@ if (!manifest.action?.default_popup) fail("action.default_popup is missing");
 if (!manifest.options_page) fail("options_page is missing");
 if (!manifest.background?.service_worker) fail("background.service_worker is missing");
 
-const want = ["storage", "activeTab"];
+// SAT-58: `scripting` lets the popup read the tab's preview; with only activeTab it carries no
+// install warning.
+const want = ["storage", "activeTab", "scripting"];
 const got = manifest.permissions;
 if (!Array.isArray(got) || got.length !== want.length || want.some((p, i) => got[i] !== p)) {
   fail(`permissions is ${JSON.stringify(got)}, want exactly ${JSON.stringify(want)}`);

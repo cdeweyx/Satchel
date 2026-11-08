@@ -11,3 +11,5 @@
 - 2026-11-08 PR12 combined: 0 findings (3 P2-level declines logged). Verdict Ready.
 - 2026-11-08 PR13 combined: 2 P2 (TikTok oEmbed dropped title upstream; abort test can't fail). Verdict Ready.
 - 2026-11-08 PR17 combined: 2 P2 (my widened media-only regex drops real colon-ending posts: a lead-ruling miss; a test that can't fail). Fixed in one round with the oEmbed id guard from the declined list. Tally: combined 2 raised, 0 P0/P1.
+- 2026-11-08 PR53 combined: 2 raised. P2 "popup close during the 300 ms preview wait drops the save" raised to P1 by the lead (send() awaits the preview before sendMessage; a lost save), confirmed from the quoted line. P2 "executeScript without injectImmediately times out on a loading tab" sent as a cheap fix (it bites the issue's own done criterion). Verdict Ready with fixes.
+- 2026-11-08 PR53 round 2 scoped: both addressed (send() no longer waits on the preview; injectImmediately). 0 new. Verdict Ready. Tally PR53: combined 2 raised, 1 P1 confirmed (unique, raised from P2 by the lead), 1 P2 fixed as cheap.

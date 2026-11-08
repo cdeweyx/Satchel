@@ -11,10 +11,14 @@ export type ErrorCode =
   | "internal"
   | `notion_${string}`;
 
+// SAT-58: `image` and `description` are the preview the Chrome extension read from the open
+// tab. Untrusted: save.ts keeps only valid values and drops the rest silently (never a 400).
 export type SaveRequest = {
   url: string;
   title?: string;
   status: "later" | "read" | "favorite";
+  image?: string;
+  description?: string;
 };
 
 export type SaveResponse = { ok: true; id: string } | { ok: false; error: ErrorCode };
@@ -36,6 +40,10 @@ export type EnrichJob = {
   kind: "x" | "media" | "page";
   clientTitle?: string;
   fallbackTitle: string;
+  // SAT-58: the client's preview, cleaned by save.ts. Only the page body uses them, and only
+  // for a page whose own lookup gave no block.
+  clientImage?: string;
+  clientDescription?: string;
 };
 
 // Every Worker response goes through here: JSON, with `ok`, and CORS open to any origin.

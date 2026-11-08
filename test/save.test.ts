@@ -523,3 +523,62 @@ describe("criterion 7: 200 {ok:true, id} for create and update", () => {
     await expectJson(await call({ url: "https://example.com/old", status: "later" }), 200, { ok: true, id: OLDEST });
   });
 });
+
+describe("SAT-58: the extension's preview from the open tab", () => {
+  const ARTICLE = "https://www.example.com/p/a-new-post";
+  const IMAGE = "https://substackcdn.com/image/fetch/w_1200,h_600/cover.png";
+  const jobs = () => vi.mocked(enrich).mock.calls.map((c) => c[0] as EnrichJob);
+
+  it("a valid image and description reach the EnrichJob, the description cleaned", async () => {
+    mockNotion();
+    const res = await call({
+      url: ARTICLE,
+      status: "later",
+      image: ` ${IMAGE} `,
+      description: "  A new post\n\n about   the thing.  ",
+    });
+    await expectJson(res, 200, { ok: true, id: CREATED });
+    expect(jobs()).toHaveLength(1);
+    expect(jobs()[0]!.clientImage).toBe(IMAGE);
+    expect(jobs()[0]!.clientDescription).toBe("A new post about the thing.");
+  });
+
+  it("a long description is capped at 1000 characters", async () => {
+    mockNotion();
+    await call({ url: ARTICLE, status: "later", description: "é".repeat(1500) });
+    expect(jobs()[0]!.clientDescription).toBe("é".repeat(1000));
+  });
+
+  it.each([
+    ["an http: image", { image: "http://cdn.example.com/a.png" }],
+    ["a data: URL", { image: "data:image/png;base64,iVBORw0KGgo=" }],
+    ["a relative image", { image: "/images/a.png" }],
+    ["an image over 2000 characters", { image: `https://cdn.example.com/${"a".repeat(2000)}.png` }],
+    ["a number image and an object description", { image: 42, description: { text: "hi" } }],
+    ["an array description and a null image", { image: null, description: ["a", "b"] }],
+    ["a blank description", { description: " \n\t " }],
+  ])("%s is dropped and the save is still 200", async (_name, extra) => {
+    const { seen } = mockNotion();
+    const res = await call({ url: ARTICLE, title: "A New Post", status: "read", ...extra });
+    await expectJson(res, 200, { ok: true, id: CREATED });
+    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${QUERY_PATH}`, "POST /pages"]);
+    expect(jobs()).toHaveLength(1);
+    expect(jobs()[0]!.clientImage).toBeUndefined();
+    expect(jobs()[0]!.clientDescription).toBeUndefined();
+    expect(jobs()[0]!.clientTitle).toBe("A New Post");
+  });
+
+  it("an invalid image doesn't drop a valid description", async () => {
+    mockNotion();
+    await call({ url: ARTICLE, status: "later", image: "http://cdn.example.com/a.png", description: "Kept." });
+    expect(jobs()[0]!.clientImage).toBeUndefined();
+    expect(jobs()[0]!.clientDescription).toBe("Kept.");
+  });
+
+  it("the preview doesn't reach Notion's create (title, URL and status only)", async () => {
+    const { seen } = mockNotion();
+    await call({ url: ARTICLE, status: "later", image: IMAGE, description: "A summary." });
+    expect(JSON.stringify(seen[1]!.body)).not.toContain("substackcdn");
+    expect(JSON.stringify(seen[1]!.body)).not.toContain("A summary.");
+  });
+});
