@@ -26,8 +26,12 @@ function safeDecode(segment: string): string {
   }
 }
 
+// Page extensions say nothing about the page (lead ruling on PR #6).
+const PAGE_EXTENSION = /\.(?:html?|shtml|php|aspx?|jsp)$/i;
+
 function deslug(segment: string): string {
   const tokens = safeDecode(segment)
+    .replace(PAGE_EXTENSION, "")
     .split(/[-_\s]+/)
     .filter((t) => t.length > 0);
   const last = tokens[tokens.length - 1];

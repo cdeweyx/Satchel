@@ -39,6 +39,18 @@ const fixtures: Array<{ name: string; raw: string; kind: LinkKind; expected: str
     kind: "page",
     expected: "Café culture · example.com",
   },
+  {
+    name: "NYT page extension is stripped",
+    raw: "https://www.nytimes.com/2025/01/27/technology/deepseek.html?unlocked_article_code=1.abc",
+    kind: "page",
+    expected: "Deepseek · nytimes.com",
+  },
+  {
+    name: "uppercase page extension is stripped",
+    raw: "https://example.com/news/big-announcement.ASPX",
+    kind: "page",
+    expected: "Big announcement · example.com",
+  },
   { name: "bare root", raw: "https://example.com/", kind: "page", expected: "example.com" },
   { name: "bare root without slash, www. dropped", raw: "https://www.example.com", kind: "page", expected: "example.com" },
   { name: "host is lowercased", raw: "https://EXAMPLE.com/", kind: "page", expected: "example.com" },
