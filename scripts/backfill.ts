@@ -1,6 +1,7 @@
 // Backlog backfill (SAT-32). Runs the live rules over every non-trashed row in the
 // Articles data source: Claude's title (Title Case, site-suffix drop, X titles), tags for
-// rows that have none, and the canonical URL. Dev tool, not part of the Worker.
+// rows that have none, and tracking params stripped from the URL. Dev tool, not part of the
+// Worker.
 //
 //   set -a; . <env file with NOTION_TOKEN, NOTION_DATA_SOURCE_ID, ANTHROPIC_API_KEY>; set +a
 //   npm run backfill -- --dry-run --out <dir> [--tags=fill-empty|union]
@@ -12,7 +13,8 @@
 // --apply writes only the rows in the plan, and only the properties that change in each. It
 // re-reads each page first: a row whose Name, Tags or URL changed since the dry run is
 // skipped; otherwise its fresh values go to <out>/rollback.jsonl before the write.
-// --rollback writes the logged old values back, newest log line first.
+// --rollback writes the logged old values back, newest log line first, skipping any row
+// whose current values differ from what apply wrote (an edit made after the apply).
 //
 // One rulebook: the Claude call, the tag guard and canonicalization come from src/ unchanged.
 // At most 3 Notion requests a second. No retries, except waiting out a 429.
@@ -50,26 +52,33 @@ export type PlanEntry = {
   newUrl: string | null;
 };
 
+// One line per row apply wrote: the values Notion held just before the write (Name as its raw
+// rich-text array too, so links and formatting come back exactly), and what apply wrote.
 export type RollbackEntry = {
   pageId: string;
   fields: ("title" | "tags" | "url")[];
   title: string;
+  titleRich?: unknown[];
   tags: string[];
   url: string | null;
+  written?: { title: string; tags: string[]; url: string | null };
 };
 
 export type DuplicateGroup = {
   key: string;
-  rows: { pageId: string; archived: boolean; title: string; url: string | null; canonicalUrl: string | null }[];
+  rows: { pageId: string; archived: boolean; title: string; url: string | null; newUrl: string | null }[];
 };
 
 type Row = {
   pageId: string;
   archived: boolean;
   title: string;
+  titleRich: unknown[];
   url: string | null;
   tags: string[];
 };
+
+type Canonicalize = (raw: string) => { stored: string };
 
 // Haiku 5.5, prompts under 100k tokens: $0.10 / MTok in, $0.50 / MTok out
 // (docs/research/02-claude.md, pricing page 2026-11-07).
@@ -77,20 +86,22 @@ const USD_PER_INPUT_TOKEN = 0.1 / 1_000_000;
 const USD_PER_OUTPUT_TOKEN = 0.5 / 1_000_000;
 const CLAUDE_CONCURRENCY = 3;
 const EXAMPLES = 20;
+const URL_EXAMPLES = 5;
 const MAX_TAGS = 3;
 const MAX_429_WAITS = 10;
 const NOTION_API = "https://api.notion.com/v1";
 
 // src/ is loaded lazily so the CLI can register its .ts resolve hook first (see the bottom).
 async function lib() {
-  const [claude, tags, canonical, notion, config] = await Promise.all([
+  const [claude, tags, canonical, notion, config, fallback] = await Promise.all([
     import("../src/claude"),
     import("../src/tags"),
     import("../src/canonical"),
     import("../src/notion"),
     import("../src/config"),
+    import("../src/fallback-title"),
   ]);
-  return { claude, tags, canonical, notion, config };
+  return { claude, tags, canonical, notion, config, fallback };
 }
 
 // --- Notion: throttled, waits out a 429, never retries anything else ---
@@ -184,18 +195,17 @@ function rowFromPage(l: Lib, raw: unknown): Row | null {
   const p = raw as { id?: string; in_trash?: boolean; archived?: boolean; properties?: Record<string, any> };
   if (typeof p.id !== "string" || p.in_trash === true || p.archived === true) return null;
   const props = p.properties ?? {};
-  const title = Array.isArray(props[PROPS.name]?.title)
-    ? (props[PROPS.name].title as { plain_text?: string; text?: { content?: string } }[])
-        .map((t) => t.plain_text ?? t.text?.content ?? "")
-        .join("")
-    : "";
+  const titleRich: unknown[] = Array.isArray(props[PROPS.name]?.title) ? props[PROPS.name].title : [];
+  const title = (titleRich as { plain_text?: string; text?: { content?: string } }[])
+    .map((t) => t.plain_text ?? t.text?.content ?? "")
+    .join("");
   const url = typeof props[PROPS.url]?.url === "string" ? (props[PROPS.url].url as string) : null;
   const tags = Array.isArray(props[PROPS.tags]?.multi_select)
     ? (props[PROPS.tags].multi_select as { name?: string }[])
         .map((t) => t.name)
         .filter((t): t is string => typeof t === "string")
     : [];
-  return { pageId: p.id, archived: props[PROPS.archived]?.checkbox === true, title, url, tags };
+  return { pageId: p.id, archived: props[PROPS.archived]?.checkbox === true, title, titleRich, url, tags };
 }
 
 async function readRows(n: Notion, l: Lib): Promise<Row[]> {
@@ -214,14 +224,78 @@ async function readRows(n: Notion, l: Lib): Promise<Row[]> {
 
 // --- Dry run ---
 
-function canonicalOf(l: Lib, url: string | null): { stored: string | null; key: string | null } {
-  if (url === null || url.trim() === "") return { stored: url, key: null };
+function paramName(piece: string): string {
+  const eq = piece.indexOf("=");
+  const name = eq === -1 ? piece : piece.slice(0, eq);
   try {
-    const c = l.canonical.canonicalize(url);
-    return { stored: c.stored, key: c.dedupe.type === "x" ? `x:${c.dedupe.id}` : `url:${c.dedupe.bare}` };
+    return decodeURIComponent(name.replace(/\+/g, " "));
   } catch {
-    // Unparsable or non-http(s): leave it as it is, dedupe on the raw string.
-    return { stored: url, key: `raw:${url.trim()}` };
+    return name;
+  }
+}
+
+// Removes only the query params canonicalize's strip table removes, and touches nothing
+// else: path, trailing slash, fragment, www, host form and X author paths stay as stored.
+// The strip decision comes from canonicalize itself (one rulebook): the URL's query is run
+// through it on the same host with a neutral path, so no X, YouTube or wrapper rewrite kicks
+// in, and whatever params survive are the ones kept. youtu.be probes as youtube.com (same
+// param list; a youtu.be path would be read as a video id). Unparsable URLs stay as they are.
+export function stripTracking(url: string, canonicalize: Canonicalize): string {
+  const hash = url.indexOf("#");
+  const beforeHash = hash === -1 ? url : url.slice(0, hash);
+  const fragment = hash === -1 ? "" : url.slice(hash);
+  const q = beforeHash.indexOf("?");
+  if (q === -1) return url;
+  const pieces = beforeHash.slice(q + 1).split("&").filter((p) => p !== "");
+  if (pieces.length === 0) return url;
+  let kept: Set<string>;
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return url;
+    const host = /(?:^|\.)youtu\.be$/.test(parsed.hostname) ? "youtube.com" : parsed.hostname;
+    const stored = canonicalize(`https://${host}/backfill-probe?${pieces.join("&")}`).stored;
+    const sq = stored.indexOf("?");
+    kept = new Set(sq === -1 ? [] : stored.slice(sq + 1).split("&").map(paramName));
+  } catch {
+    return url;
+  }
+  const keep = pieces.filter((p) => kept.has(paramName(p)));
+  if (keep.length === pieces.length) return url;
+  return `${beforeHash.slice(0, q)}${keep.length ? `?${keep.join("&")}` : ""}${fragment}`;
+}
+
+// A title Satchel made up when it had none: `@user on X`, `X post <id>`, the fallback title
+// for this URL (any kind), or one isMissingTitle calls missing (empty, or the URL itself as
+// stored, stripped or canonical). Claude only invents a title from these, so they're never sent.
+function isPlaceholderTitle(l: Lib, title: string, url: string | null, stripped: string | null): boolean {
+  const t = title.trim();
+  if (/^@[A-Za-z0-9_]{1,15} on X$/.test(t) || /^X post \d+$/.test(t)) return true;
+  if (url === null || url.trim() === "") return t === "";
+  let canonical = url;
+  try {
+    canonical = l.canonical.canonicalize(url).stored;
+  } catch {
+    // keep the stored URL
+  }
+  if (l.fallback.isMissingTitle(t, url, stripped ?? url) || l.fallback.isMissingTitle(t, url, canonical)) return true;
+  return (["x", "media", "page"] as const).some((kind) => l.fallback.fallbackTitle(url, kind) === t);
+}
+
+// Quote and dash style and whitespace only: not a title change, keep the user's characters.
+function typographyKey(s: string): string {
+  return s
+    .replace(/[‘’‚‛′]/g, "'")
+    .replace(/[“”„‟″]/g, '"')
+    .replace(/[‐-―−]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function linkKind(l: Lib, url: string): "x" | "media" | "page" {
+  try {
+    return l.canonical.canonicalize(url).kind;
+  } catch {
+    return "page";
   }
 }
 
@@ -272,12 +346,13 @@ export async function dryRun(deps: Deps, out: string, mode: TagsMode): Promise<v
   const { options, names: allowedTags } = await readTagOptions(n, l);
   const rows = await readRows(n, l);
 
-  // Duplicates: rows whose canonical URL or dedupe key matches another row's. Listed only.
-  const canon = rows.map((r) => canonicalOf(l, r.url));
+  // Duplicates: rows whose URL, after the tracking strip, equals another row's. Listed only.
+  const newUrls = rows.map((r) => (r.url === null ? null : stripTracking(r.url, l.canonical.canonicalize)));
   const byKey = new Map<string, number[]>();
-  canon.forEach((c, i) => {
-    if (c.key === null) return;
-    byKey.set(c.key, [...(byKey.get(c.key) ?? []), i]);
+  newUrls.forEach((u, i) => {
+    if (u === null || u.trim() === "") return;
+    const key = u.trim();
+    byKey.set(key, [...(byKey.get(key) ?? []), i]);
   });
   const groups: DuplicateGroup[] = [];
   const isDuplicate = new Set<number>();
@@ -291,12 +366,18 @@ export async function dryRun(deps: Deps, out: string, mode: TagsMode): Promise<v
         archived: rows[i]!.archived,
         title: rows[i]!.title,
         url: rows[i]!.url,
-        canonicalUrl: canon[i]!.stored,
+        newUrl: newUrls[i]!,
       })),
     });
   }
 
-  // Claude for every non-duplicate row (duplicates are never written, so never paid for).
+  const placeholder = new Set<number>();
+  rows.forEach((r, i) => {
+    if (!isDuplicate.has(i) && isPlaceholderTitle(l, r.title, r.url, newUrls[i]!)) placeholder.add(i);
+  });
+
+  // Claude for every row except duplicates (never written, so never paid for) and
+  // placeholder titles (Claude would only invent one).
   const env = { ANTHROPIC_API_KEY: apiKey } as unknown as Env;
   const results: ({ title: string; tags: string[] } | null)[] = new Array(rows.length).fill(null);
   let failed = 0;
@@ -305,11 +386,9 @@ export async function dryRun(deps: Deps, out: string, mode: TagsMode): Promise<v
     const worker = async () => {
       while (next < rows.length) {
         const i = next++;
-        if (isDuplicate.has(i)) continue;
+        if (isDuplicate.has(i) || placeholder.has(i)) continue;
         const row = rows[i]!;
-        const url = canon[i]!.stored ?? "";
-        const input: ClaudeInput =
-          row.title.trim() === "" ? { shape: "untitled", url } : { shape: "titled", title: row.title, url };
+        const input: ClaudeInput = { shape: "titled", title: row.title, url: newUrls[i] ?? "" };
         const res = await l.claude.cleanTitleAndTags(env, input, allowedTags, new AbortController().signal);
         if (res === null) failed++;
         results[i] = res;
@@ -326,7 +405,9 @@ export async function dryRun(deps: Deps, out: string, mode: TagsMode): Promise<v
   rows.forEach((row, i) => {
     if (isDuplicate.has(i)) return;
     const res = results[i] ?? null;
-    const newTitle = res && res.title.trim() !== "" ? res.title.trim() : row.title;
+    const claudeTitle = res ? res.title.trim() : "";
+    const newTitle =
+      claudeTitle === "" || typographyKey(claudeTitle) === typographyKey(row.title) ? row.title : claudeTitle;
     const claudeTags = res ? l.tags.guardTags(res.tags, options).map((t) => idToName.get(t.id)!) : [];
     let newTags = row.tags;
     if (mode === "fill-empty") {
@@ -337,7 +418,7 @@ export async function dryRun(deps: Deps, out: string, mode: TagsMode): Promise<v
       const added = claudeTags.filter((t) => !have.has(t.toLowerCase()));
       newTags = [...row.tags, ...added.slice(0, Math.max(0, MAX_TAGS - row.tags.length))];
     }
-    const newUrl = canon[i]!.stored;
+    const newUrl = newUrls[i]!;
     const added = newTags.length - row.tags.length;
     if (newTitle === row.title && added === 0 && newUrl === row.url) return;
     if (added > 0) {
@@ -370,14 +451,31 @@ export async function dryRun(deps: Deps, out: string, mode: TagsMode): Promise<v
       deps.log(`  [${where(ex.entry)}] tags: ${before} → ${ex.entry.newTags.join(", ")}  (${JSON.stringify(ex.entry.newTitle)})`);
     }
   }
+  // URL changes, by link kind (every change is a tracking-param strip).
+  const urlChanges = plan.filter((e) => e.newUrl !== e.oldUrl);
+  const byKind = { x: [] as PlanEntry[], media: [] as PlanEntry[], page: [] as PlanEntry[] };
+  for (const e of urlChanges) byKind[linkKind(l, e.oldUrl ?? "")].push(e);
+  deps.log("");
+  deps.log(`URL examples (up to ${URL_EXAMPLES}, tracking params stripped):`);
+  const urlExamples: PlanEntry[] = [];
+  for (let k = 0; urlExamples.length < Math.min(URL_EXAMPLES, urlChanges.length); k++) {
+    for (const list of [byKind.page, byKind.x, byKind.media]) {
+      if (list[k] && urlExamples.length < URL_EXAMPLES) urlExamples.push(list[k]!);
+    }
+  }
+  for (const e of urlExamples) deps.log(`  [${where(e)}] url: ${e.oldUrl} → ${e.newUrl}`);
+
   const cost = usage.input * USD_PER_INPUT_TOKEN + usage.output * USD_PER_OUTPUT_TOKEN;
   const dupRows = groups.reduce((s, g) => s + g.rows.length, 0);
   deps.log("");
   deps.log(`Tags mode: ${mode}`);
   deps.log(`Rows scanned: ${rows.length}`);
   deps.log(`Titles changed: ${plan.filter((e) => e.newTitle !== e.oldTitle).length}`);
+  deps.log(`Placeholder titles kept (not sent to Claude): ${placeholder.size}`);
   deps.log(`Tags added: ${tagsAdded} across ${tagsAddedRows} rows`);
-  deps.log(`URLs changed: ${plan.filter((e) => e.newUrl !== e.oldUrl).length}`);
+  deps.log(
+    `URLs changed (tracking params stripped): ${urlChanges.length} (page ${byKind.page.length}, X ${byKind.x.length}, media ${byKind.media.length})`,
+  );
   deps.log(`Duplicate groups: ${groups.length} (${dupRows} rows, listed only, not in the plan)`);
   deps.log(`Claude failures (old title kept): ${failed}`);
   deps.log(`Rows in plan: ${plan.length}`);
@@ -466,18 +564,20 @@ export async function apply(deps: Deps, planPath: string, out: string): Promise<
   mkdirSync(out, { recursive: true });
   const logPath = `${out}/rollback.jsonl`;
   let written = 0;
+  let already = 0;
   let skipped = 0;
   for (const { entry: e, props, fields } of writes) {
     if (fields.length === 0) continue;
-    // Re-read right before writing. A row the user edited (or trashed) since the dry run is
-    // skipped; otherwise the rollback entry holds what's in Notion now, not the plan's copy.
+    // Re-read right before writing. A row that already holds the plan's new values (a resumed
+    // run) is reported as already applied; one the user edited (or trashed) since the dry run
+    // is skipped. Otherwise the rollback entry holds what's in Notion now, not the plan's copy.
     const current = rowFromPage(l, await n.retrievePage(e.pageId));
-    if (
-      current === null ||
-      current.title !== e.oldTitle ||
-      current.url !== e.oldUrl ||
-      !sameTagSet(current.tags, e.oldTags)
-    ) {
+    if (current !== null && holds(current, e.newTitle, e.newTags, e.newUrl)) {
+      deps.log(`  ${e.pageId} already applied`);
+      already++;
+      continue;
+    }
+    if (current === null || !holds(current, e.oldTitle, e.oldTags, e.oldUrl)) {
       deps.log(`  ${e.pageId} skipped: changed since dry run`);
       skipped++;
       continue;
@@ -486,16 +586,37 @@ export async function apply(deps: Deps, planPath: string, out: string): Promise<
       pageId: e.pageId,
       fields,
       title: current.title,
+      titleRich: current.titleRich,
       tags: current.tags,
       url: current.url,
+      written: { title: e.newTitle, tags: e.newTags, url: e.newUrl },
     };
     appendFileSync(logPath, JSON.stringify(rollback) + "\n");
     await n.patchPage(e.pageId, props);
     written++;
   }
   deps.log(`Rows written: ${written} of ${plan.length} in the plan`);
+  deps.log(`Already applied: ${already}`);
   deps.log(`Skipped (changed since dry run): ${skipped}`);
   deps.log(`Old values logged to ${logPath}`);
+}
+
+function holds(row: Row, title: string, tags: string[], url: string | null): boolean {
+  return row.title === title && row.url === url && sameTagSet(row.tags, tags);
+}
+
+// A rich-text array as read, cut down to what Notion accepts on write: the type, its
+// payload (text content and link, mention, equation) and the annotations.
+function writableRichText(items: unknown[]): unknown[] {
+  return items.map((raw) => {
+    const item = raw as Record<string, unknown>;
+    const type = typeof item.type === "string" ? item.type : "text";
+    return {
+      type,
+      [type]: item[type],
+      ...(item.annotations === undefined ? {} : { annotations: item.annotations }),
+    };
+  });
 }
 
 export async function rollback(deps: Deps, logPath: string): Promise<void> {
@@ -506,22 +627,47 @@ export async function rollback(deps: Deps, logPath: string): Promise<void> {
 
   const writes = entries.map((e) => {
     const props: Properties = {};
-    if (e.fields.includes("title")) Object.assign(props, l.notion.titleProp(e.title));
+    if (e.fields.includes("title")) {
+      // The raw rich text when logged (links and formatting come back exactly), else plain.
+      Object.assign(
+        props,
+        Array.isArray(e.titleRich)
+          ? ({ [l.config.PROPS.name]: { title: writableRichText(e.titleRich) } } as unknown as Properties)
+          : l.notion.titleProp(e.title),
+      );
+    }
     if (e.fields.includes("tags")) Object.assign(props, l.notion.tagIdsProp(tagIds(l, e.tags, options, e.pageId)));
     if (e.fields.includes("url")) {
       Object.assign(props, e.url === null ? { [l.config.PROPS.url]: { url: null } } : l.notion.urlProp(e.url));
     }
-    return { pageId: e.pageId, props };
+    return { entry: e, props };
   });
 
-  // Newest first, so a row written twice ends at its oldest logged value.
+  // Newest first, so a row written twice ends at its oldest logged value. Each row is re-read
+  // first: if a field apply wrote no longer holds what apply wrote (the user edited it after
+  // the apply, or trashed the row), the row is skipped so the edit survives.
   let restored = 0;
-  for (const w of writes.reverse()) {
-    if (Object.keys(w.props).length === 0) continue;
-    await n.patchPage(w.pageId, w.props);
+  let skipped = 0;
+  for (const { entry: e, props } of writes.reverse()) {
+    if (Object.keys(props).length === 0) continue;
+    const current = rowFromPage(l, await n.retrievePage(e.pageId));
+    const w = e.written;
+    const intact =
+      current !== null &&
+      w !== undefined &&
+      (!e.fields.includes("title") || current.title === w.title) &&
+      (!e.fields.includes("tags") || sameTagSet(current.tags, w.tags)) &&
+      (!e.fields.includes("url") || current.url === w.url);
+    if (!intact) {
+      deps.log(`  warning: ${e.pageId} skipped: changed since apply`);
+      skipped++;
+      continue;
+    }
+    await n.patchPage(e.pageId, props);
     restored++;
   }
   deps.log(`Rows restored: ${restored}`);
+  deps.log(`Skipped (changed since apply): ${skipped}`);
 }
 
 // --- CLI ---
