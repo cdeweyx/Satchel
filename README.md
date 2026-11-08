@@ -61,6 +61,7 @@ Roadmap:
 - `src/canonical.ts`: URL canonicalization, dedupe keys and the Media flag. Pure, no network.
 - `src/fallback-title.ts`: the title used when the client sends none.
 - `src/notion.ts`: the Notion client. Throws `NotionError` on any failure, never retries.
+- `src/tags.ts`: the tag guard. Caches the live Tags options for 10 minutes and maps tag names to option ids (case-insensitive, unknowns dropped, max 3).
 - `src/config.ts`: Notion property names (`PROPS`), the pinned Notion API version, and the database IDs.
 - `src/log.ts`: one structured log line per event, for Workers Logs.
 - `scripts/deploy.sh`: deploys with secrets passed through a private temp file. Prints key names only.
