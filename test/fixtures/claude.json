@@ -1,0 +1,87 @@
+{
+  "allowedTags": ["AI", "Startups", "Design", "Engineering", "Economics", "Politics", "Video"],
+  "cases": [
+    {
+      "name": "x post with handle",
+      "input": {
+        "shape": "x",
+        "author": "Paul Graham",
+        "handle": "paulg",
+        "text": "The most common mistake founders make is building something nobody wants.",
+        "url": "https://x.com/paulg/status/1002103360646823936"
+      },
+      "message": "X post by Paul Graham (@paulg): \"The most common mistake founders make is building something nobody wants.\"\nURL: https://x.com/paulg/status/1002103360646823936",
+      "content": [
+        { "type": "text", "text": "{\"title\":\"Paul Graham: Founders Often Build Things Nobody Wants\",\"tags\":[\"Startups\"]}" }
+      ],
+      "expected": { "title": "Paul Graham: Founders Often Build Things Nobody Wants", "tags": ["Startups"] }
+    },
+    {
+      "name": "x post without handle",
+      "input": {
+        "shape": "x",
+        "author": "Naval",
+        "text": "How to Get Rich (without getting lucky):",
+        "url": "https://x.com/naval/status/1002103360646823936"
+      },
+      "message": "X post by Naval: \"How to Get Rich (without getting lucky):\"\nURL: https://x.com/naval/status/1002103360646823936",
+      "content": [
+        { "type": "text", "text": "{\"title\":\"Naval: How to Get Rich Without Getting Lucky\",\"tags\":[\"Economics\",\"Startups\"]}" }
+      ],
+      "expected": { "title": "Naval: How to Get Rich Without Getting Lucky", "tags": ["Economics", "Startups"] }
+    },
+    {
+      "name": "titled with description",
+      "input": {
+        "shape": "titled",
+        "title": "Designing with Variables | The Figma Blog",
+        "description": "How variables change the way teams build design systems.",
+        "url": "https://www.figma.com/blog/designing-with-variables/"
+      },
+      "message": "Title: Designing with Variables | The Figma Blog\nDescription: How variables change the way teams build design systems.\nURL: https://www.figma.com/blog/designing-with-variables/",
+      "content": [
+        { "type": "text", "text": "{\"title\":\"Designing With Variables\",\"tags\":[\"Design\"]}" }
+      ],
+      "expected": { "title": "Designing With Variables", "tags": ["Design"] }
+    },
+    {
+      "name": "titled without description, thinking block first",
+      "input": {
+        "shape": "titled",
+        "title": "(3) Building a Compiler in a Weekend - YouTube",
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+      },
+      "message": "Title: (3) Building a Compiler in a Weekend - YouTube\nURL: https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "content": [
+        { "type": "thinking", "thinking": "", "signature": "EqQBCkgIARABGAIiQPZ0" },
+        { "type": "text", "text": "{\"title\":\"Building a Compiler in a Weekend\",\"tags\":[\"Engineering\",\"Video\"]}" }
+      ],
+      "expected": { "title": "Building a Compiler in a Weekend", "tags": ["Engineering", "Video"] }
+    },
+    {
+      "name": "untitled with description",
+      "input": {
+        "shape": "untitled",
+        "description": "Pull request: add streaming support to the parser.",
+        "url": "https://github.com/acme/parser/pull/42"
+      },
+      "message": "Title: (none)\nDescription: Pull request: add streaming support to the parser.\nURL: https://github.com/acme/parser/pull/42",
+      "content": [
+        { "type": "text", "text": "{\"title\":\"Add Streaming Support to the Parser\",\"tags\":[\"Engineering\"]}" }
+      ],
+      "expected": { "title": "Add Streaming Support to the Parser", "tags": ["Engineering"] }
+    },
+    {
+      "name": "untitled, url only",
+      "input": {
+        "shape": "untitled",
+        "url": "https://www.federalreserve.gov/newsevents/pressreleases/monetary20261104a.htm"
+      },
+      "message": "Title: (none)\nURL: https://www.federalreserve.gov/newsevents/pressreleases/monetary20261104a.htm",
+      "content": [
+        { "type": "text", "text": "{\"title\":\"Federal Reserve Monetary Policy Press Release\",\"tags\":[\"Economics\",\"Politics\"]}" }
+      ],
+      "expected": { "title": "Federal Reserve Monetary Policy Press Release", "tags": ["Economics", "Politics"] }
+    }
+  ]
+}
