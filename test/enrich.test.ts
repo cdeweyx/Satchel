@@ -266,22 +266,40 @@ const pageJob = (over: Partial<EnrichJob> = {}): EnrichJob => ({
 // The tag cache is per isolate, so every test starts cold. The default schema has a Tags
 // property with no options, so Claude is skipped (R4) and the SAT-12 tests below keep
 // exercising lookup, guards and failures on their own. SAT-15 tests mock their own schema.
-// SAT-48: the body append answers 200 by default (unrecorded), so tests from before SAT-48
+// SAT-48: the body append answers 200 by default, outside `seen`, so tests from before SAT-48
 // keep their request lists; the SAT-48 tests below mock and record it themselves.
+// SAT-56: the default append also lands in `appended`, and the afterEach fails any test that
+// appended without calling allowAppends() first. So a test that expects no body (a failed
+// patch or re-read, a re-save) catches one without asserting it.
+const appended: unknown[] = [];
+let appendsAllowed = false;
+const allowAppends = () => {
+  appendsAllowed = true;
+};
+
 beforeEach(() => {
   invalidateTagCache();
+  appended.length = 0;
+  appendsAllowed = false;
   network.use(
     http.get(SCHEMA_URL, () => HttpResponse.json(schemaBody([]))),
-    http.patch(BODY_URL, () => HttpResponse.json({ object: "list", results: [] })),
+    http.patch(BODY_URL, async ({ request }) => {
+      appended.push(await request.json());
+      return HttpResponse.json({ object: "list", results: [] });
+    }),
   );
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  if (!appendsAllowed && appended.length > 0) {
+    throw new Error(`unexpected body append (call allowAppends() if the test expects one): ${JSON.stringify(appended)}`);
+  }
 });
 
 describe("enrich: X job through waitUntil (criterion 1)", () => {
   it("patches Name with the looked-up title and URL with oEmbed's canonical, once", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("How to Get Rich (without getting lucky):"));
@@ -307,6 +325,7 @@ describe("enrich: X job through waitUntil (criterion 1)", () => {
   });
 
   it("collapses the newlines X's <br> leaves into single spaces", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("Line one<br><br>  Line two<br>Line three"));
@@ -334,6 +353,7 @@ describe("enrich: X job through waitUntil (criterion 1)", () => {
   });
 
   it("no URL in the patch when oEmbed's url equals the stored URL (R5)", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("Same url", X_STORED));
@@ -350,6 +370,7 @@ describe("enrich: X job through waitUntil (criterion 1)", () => {
 
 describe("enrich: Name guard (criterion 2)", () => {
   it("a row renamed since create gets no Name in the patch (URL still swapped)", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("How to Get Rich (without getting lucky):"));
@@ -399,6 +420,7 @@ describe("enrich: Name guard (criterion 2)", () => {
 
 describe("enrich: URL guard and URL failures (PR 17 rulings)", () => {
   it("a URL edited in Notion since create is left alone; the Name is still written", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("How to Get Rich (without getting lucky):"));
@@ -428,6 +450,7 @@ describe("enrich: URL guard and URL failures (PR 17 rulings)", () => {
   });
 
   it("a too-long oEmbed url (url_too_long) drops only the URL, never the Name", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     const long = `https://x.com/naval/status/${X_ID}?pad=${"a".repeat(2100)}`;
@@ -473,6 +496,7 @@ describe("enrich: a >2000-char created title isn't read as an edit (PR 14 carry)
 
 describe("enrich: review fixes (PR 17 round 2)", () => {
   it("a real post ending in a colon before an image keeps its title", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(
@@ -526,6 +550,7 @@ describe("enrich: review fixes (PR 17 round 2)", () => {
   });
 
   it("an oEmbed url naming a different post id is not swapped in", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("Hello", "https://x.com/naval/status/999"));
@@ -539,6 +564,7 @@ describe("enrich: review fixes (PR 17 round 2)", () => {
   });
 
   it("an oEmbed url whose id only starts with the job's id is not swapped in", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("Hello", `https://x.com/naval/status/${X_ID}7`));
@@ -552,6 +578,7 @@ describe("enrich: review fixes (PR 17 round 2)", () => {
   });
 
   it("an oEmbed url with the job's id and a query string is swapped in", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     const url = `https://x.com/naval/status/${X_ID}?s=20`;
@@ -1269,6 +1296,7 @@ describe("SAT-37 criterion 1: a link-only X post has no post text", () => {
     ["a word with a dot", "Node.js"],
     ["a bare domain", "box.com"],
   ])("oEmbed: %s is post text, so it keeps its title", async (_label, paragraph) => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed(paragraph));
@@ -1363,6 +1391,7 @@ describe("SAT-41: a client-title save gives Claude the page summary", () => {
     `<body><p>${BODY_TEXT}</p></body></html>`;
 
   it("criteria 1 and 2: a page save runs the lookup; Claude gets the client title plus the description, no body text", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     htmlPage(ARTICLE, record, SUMMARY_HTML);
@@ -1394,6 +1423,7 @@ describe("SAT-41: a client-title save gives Claude the page summary", () => {
   });
 
   it("criterion 1: with Claude failing, the looked-up title never replaces the client title", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     htmlPage(ARTICLE, record, SUMMARY_HTML);
@@ -1416,6 +1446,7 @@ describe("SAT-41: a client-title save gives Claude the page summary", () => {
   });
 
   it("criterion 2: an X save sends Claude the post text (x shape); no URL swap", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     const clientTitle = 'Naval on X: "How to Get Rich" / X';
@@ -1513,6 +1544,7 @@ describe("SAT-42: an X post's Name is the post text, no author, when Claude fail
     );
 
   it("Claude 401 on an oEmbed X save: the patch carries the post text without 'Naval: ', plus the URL swap", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("How to Get Rich<br>  (without getting lucky):"));
@@ -1544,6 +1576,7 @@ describe("SAT-42: an X post's Name is the post text, no author, when Claude fail
   });
 
   it("Claude 401 on a Twitterbot X save: the patch carries og:description without the display name", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     notFound(record, OEMBED);
@@ -1565,6 +1598,7 @@ describe("SAT-42: an X post's Name is the post text, no author, when Claude fail
   });
 
   it("a 3000-char post: the Name is the text alone, whitespace collapsed, cut at 2000", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("word<br>  ".repeat(600)));
@@ -1583,6 +1617,7 @@ describe("SAT-42: an X post's Name is the post text, no author, when Claude fail
   });
 
   it("a post whose own text starts with the author's name keeps it: only the lookup's prefix comes off", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed("Naval: a podcast about wealth and happiness"));
@@ -1642,6 +1677,7 @@ describe("SAT-43: an X Article gets a real title", () => {
   // SAT-45 changed this test's Claude assertion: it pinned the `x` shape for the Article, which
   // asked Claude for a gist. An Article is now the `titled` shape with its title.
   it("criteria 1 and 2: Claude gets the titled shape with the article title (SAT-45); its title and tags land, URL swapped", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, OEMBED_BODY);
@@ -1680,6 +1716,7 @@ describe("SAT-43: an X Article gets a real title", () => {
   });
 
   it("criterion 2 with Claude failing: the Name is the article title alone, no author (SAT-42)", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, OEMBED_BODY);
@@ -1786,6 +1823,7 @@ describe("SAT-45: an X Article keeps its own title", () => {
   }
 
   it("criterion 1: Claude gets the titled shape with the article title and no author; its clean title and tags land", async () => {
+    allowAppends();
     const logs = captureLogs();
     const { seen, record } = recorder();
     mockArticle(record);
@@ -1809,6 +1847,7 @@ describe("SAT-45: an X Article keeps its own title", () => {
   });
 
   it("lead ruling: og:description a different summary sentence; Claude still gets og:title's quote as the title", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, OEMBED_BODY);
@@ -1836,6 +1875,7 @@ describe("SAT-45: an X Article keeps its own title", () => {
   });
 
   it("criterion 1 with a client title (Chrome's tab title): still the titled shape with the article title", async () => {
+    allowAppends();
     captureLogs();
     const clientTitle = 'Aaron Levie on X: "The never-ending last mile of work" / X';
     const { seen, record } = recorder();
@@ -1858,6 +1898,7 @@ describe("SAT-45: an X Article keeps its own title", () => {
   });
 
   it("criterion 2: with Claude failing, the Name is the article title as written (page titles have no Title Case fallback)", async () => {
+    allowAppends();
     captureLogs();
     const { seen, record } = recorder();
     mockArticle(record);
@@ -1875,6 +1916,7 @@ describe("SAT-45: an X Article keeps its own title", () => {
   });
 
   it("criterion 3: the same words as a normal post's own text keep the x gist shape", async () => {
+    allowAppends();
     captureLogs();
     const oembed = {
       ...A.oembed,
@@ -2434,5 +2476,42 @@ describe("SAT-48: the new row's page body gets the preview image or the summary"
         properties: { [PROPS.archived]: { checkbox: false }, [PROPS.favorite]: { checkbox: false } },
       });
     });
+  });
+});
+
+describe("SAT-56: a failed patch or re-read writes no page body", () => {
+  // An og:image the append would write, so only the failure stops it. Not opted in: the
+  // afterEach guard fails these too if an append slips through.
+  const WITH_IMAGE =
+    '<html><head><title>Hello World, Properly</title><meta property="og:image" content="https://cdn.example.com/cover.jpg"></head></html>';
+
+  it("the final patch 500s: enrich_failed {stage: patch}, no append", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, WITH_IMAGE);
+    mockNotion(record, { name: "Hello world · example.com", patchStatus: 500 });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([`GET ${ARTICLE}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`]);
+    expect(appended).toEqual([]);
+    expect(logs()).toEqual([
+      { event: "enrich_failed", ok: false, stage: "patch", pageId: PAGE_ID, status: 500, error: "service_unavailable" },
+    ]);
+  });
+
+  it("the re-read fails: enrich_failed {stage: reread}, no patch, no append", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, WITH_IMAGE);
+    mockNotion(record, { name: "Hello world · example.com", rereadStatus: 404 });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([`GET ${ARTICLE}`, `GET ${PAGE_URL}`]);
+    expect(appended).toEqual([]);
+    expect(logs()).toEqual([
+      { event: "enrich_failed", ok: false, stage: "reread", pageId: PAGE_ID, status: 404, error: "object_not_found" },
+    ]);
   });
 });
