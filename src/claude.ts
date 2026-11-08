@@ -22,7 +22,8 @@ export type ClaudeOutput = { title: string; tags: string[] };
 // Thinking, Product + Career, Mindfulness + Self-Improvement, and mostly one tag. "A Timeless
 // New Year" replaces an original example that turned out to be a scoring row. No example is
 // in the 40-row scoring set (scripts/eval-tags.ts). SAT-42 (user, 2026-11-08): an X post's
-// title is the gist alone, no author, so the Naval X post example lost its "Naval: " prefix.
+// title is the gist alone, no author, so no example carries an "Author: " prefix (Naval,
+// Akshaya and Karri Saarinen dropped theirs; tags unchanged).
 const PROMPT = `You clean up titles for links saved to a personal reading database and pick tags for them.
 
 Title rules:
@@ -68,13 +69,13 @@ Examples (title → tags):
 - The Startup Drake Equation → Startups
 - Lessons From My First Exit → Startups
 - Scarcity During Experimentation, Abundance During Scaling → Startups
-- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth
+- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth
 - The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth
 - Mistaking Outputs for Inputs → Thinking
 - Why Books Don't Work → Mental Models, Thinking
 - Building Without Predicting → Self-Improvement, Mental Models
 - Product Innovation Is Discovery Not Creation → Product
-- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product
+- 10 Rules for Crafting Products That Stand Out → Product
 - Managing Up → Career
 - Why Are Big Tech Companies So Slow? → Career, Product
 - A Letter to Our Next PM → Career, Product

@@ -235,13 +235,17 @@ describe("request shape", () => {
     ]);
     expect(system).not.toContain("Author: short gist");
     expect(system).not.toMatch(/Author:/);
-    // The one example drawn from an X post (Naval's) carries no author.
+    // No example teaches an "Author: …" title; the three that had one keep their tags.
     const examples = section(system, "Examples (title → tags):", "Allowed tags: ");
     expect(examples).toContain("- How to Get Rich Without Getting Lucky → Self-Improvement, Finance");
-    expect(examples.some((l) => l.startsWith("- Naval"))).toBe(false);
+    expect(examples).toContain("- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth");
+    expect(examples).toContain("- 10 Rules for Crafting Products That Stand Out → Product");
+    for (const author of ["Naval", "Akshaya", "Karri Saarinen"]) {
+      expect(examples.some((l) => l.startsWith(`- ${author}`))).toBe(false);
+    }
   });
 
-  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40; SAT-42 drops Naval's author)", () => {
+  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40; SAT-42 drops three author prefixes)", () => {
     expect(section(systemPrompt(TAGS), "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
@@ -254,13 +258,13 @@ describe("request shape", () => {
       "- The Startup Drake Equation → Startups",
       "- Lessons From My First Exit → Startups",
       "- Scarcity During Experimentation, Abundance During Scaling → Startups",
-      "- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth",
+      "- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth",
       "- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth",
       "- Mistaking Outputs for Inputs → Thinking",
       "- Why Books Don't Work → Mental Models, Thinking",
       "- Building Without Predicting → Self-Improvement, Mental Models",
       "- Product Innovation Is Discovery Not Creation → Product",
-      "- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product",
+      "- 10 Rules for Crafting Products That Stand Out → Product",
       "- Managing Up → Career",
       "- Why Are Big Tech Companies So Slow? → Career, Product",
       "- A Letter to Our Next PM → Career, Product",
