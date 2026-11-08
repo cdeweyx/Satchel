@@ -10,12 +10,19 @@ type KeyState = "none" | "wrong" | "ok";
 const STATUSES = new Set(["later", "read", "favorite"]);
 const MAX_URL_LENGTH = 2000;
 
-const PREFLIGHT_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type, x-satchel-key",
-  "Access-Control-Max-Age": "86400",
-};
+// CORS preflight: 204, no body, no key needed. /health needs one too, since the extension's
+// Test button sends a keyed GET from a chrome-extension:// origin.
+function preflight(methods: string): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": methods,
+      "Access-Control-Allow-Headers": "content-type, x-satchel-key",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
 
 function fail(status: number, error: ErrorCode, headers?: HeadersInit): Response {
   return json(status, { ok: false, error }, headers);
@@ -77,11 +84,12 @@ export default {
       const { pathname } = new URL(req.url);
       if (pathname === "/save") {
         if (req.method === "POST") return await save(req, env, ctx);
-        if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: PREFLIGHT_HEADERS });
+        if (req.method === "OPTIONS") return preflight("POST, OPTIONS");
         return fail(405, "method_not_allowed", { Allow: "POST, OPTIONS" });
       }
       if (pathname === "/health") {
-        if (req.method !== "GET") return fail(405, "method_not_allowed", { Allow: "GET" });
+        if (req.method === "OPTIONS") return preflight("GET, OPTIONS");
+        if (req.method !== "GET") return fail(405, "method_not_allowed", { Allow: "GET, OPTIONS" });
         const result = await health(env, await keyState(req, env));
         return json(result.status, result.body);
       }

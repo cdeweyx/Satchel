@@ -143,7 +143,7 @@ describe("criterion 1: every response is JSON with ok and open CORS", () => {
 
   it("405s name the allowed methods", async () => {
     expect((await call(request("/save", { method: "PUT" }))).headers.get("Allow")).toBe("POST, OPTIONS");
-    expect((await call(request("/health", { method: "DELETE" }))).headers.get("Allow")).toBe("GET");
+    expect((await call(request("/health", { method: "DELETE" }))).headers.get("Allow")).toBe("GET, OPTIONS");
   });
 });
 
@@ -255,6 +255,31 @@ describe("criterion 4: OPTIONS /save preflight", () => {
 
   it("needs no key", async () => {
     expect((await call(request("/save", { method: "OPTIONS" }))).status).toBe(204);
+  });
+});
+
+describe("OPTIONS /health preflight (D-4 revised in build)", () => {
+  it("returns 204 with GET, OPTIONS and no body, for the extension's keyed Test GET", async () => {
+    const res = await call(
+      request("/health", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "chrome-extension://abc",
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Headers": "x-satchel-key",
+        },
+      }),
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Methods")).toBe("GET, OPTIONS");
+    expect(res.headers.get("Access-Control-Allow-Headers")).toBe("content-type, x-satchel-key");
+    expect(res.headers.get("Access-Control-Max-Age")).toBe("86400");
+    expect(await res.text()).toBe("");
+  });
+
+  it("needs no key", async () => {
+    expect((await call(request("/health", { method: "OPTIONS" }))).status).toBe(204);
   });
 });
 

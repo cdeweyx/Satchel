@@ -117,6 +117,7 @@ Stored URL: canonical, host lowercased, `m.` and `mobile.` dropped, `www.` as gi
 - Door: one-way. Confirm by: M0 curl of each code; M3 saves from both profiles.
 - Status: revised round 1, 2026-11-07: keyless liveness, keyed probes. Revised round 2, 2026-11-07: every response JSON with `ok`; wrong key on `/health` is 401.
 - Status: decided (user review, 2026-11-07).
+- Status: revised in build, 2026-11-08 (SAT-4): `OPTIONS /health` → 204 with `Allow-Methods: GET, OPTIONS`, since the extension's Test button preflights its keyed GET.
 
 ### Two-way doors (full records in the appendix)
 
