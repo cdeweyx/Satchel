@@ -26,14 +26,10 @@ export type EnrichOptions = { deadlineMs?: number };
 // An X post with no text of its own: only media or links (SAT-12, SAT-37). Tested on the
 // post text alone (never the `author: ` title, so a real post ending in "...: pic.twitter.com/x"
 // keeps its title). A link reads as X shows it: a full URL (t.co or any other, Twitterbot's
-// og:description), a pic.twitter.com media link, or a display URL (host plus a path, or cut
-// with "…"). A display URL needs the path or ellipsis so a one-word post like "Node.js" stays text.
-const LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/\S*|…))`;
+// og:description), a pic.twitter.com media link, or a display URL (host plus a path, maybe
+// cut with "…"). A display URL needs the path, so "Node.js", "Node.js…" and "box.com" stay text.
+const LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*)`;
 const NO_POST_TEXT = new RegExp(`^${LINK}(?: ${LINK})*$`, "i");
-
-// SAT-37: with no post text Claude can describe the empty post instead of titling it
-// ("Shares a link with no accompanying text"). Such a title is dropped for the fallback Name.
-const NO_TEXT_TITLE = /\b(shares?|posted|link)\b.*\b(no|without)\b.*\b(text|caption|comment)/i;
 
 type Stage = "schema" | "reread" | "patch";
 
@@ -55,11 +51,6 @@ export function isNoTextX(lookup: LookupResult): boolean {
 // The looked-up title for Name purposes, after R2 hygiene.
 function lookedUpTitle(lookup: LookupResult, storedUrl: string): string | null {
   return isNoTextX(lookup) ? null : usableTitle(lookup.title, storedUrl);
-}
-
-// Claude's title for Name purposes: dropped when it describes a no-text X post's emptiness.
-function claudeTitle(title: string | null, lookup: LookupResult): string | null {
-  return title !== null && isNoTextX(lookup) && NO_TEXT_TITLE.test(title) ? null : title;
 }
 
 // R4: the Name's plain text, joined across its rich-text runs. Null when the shape is off,
@@ -119,12 +110,10 @@ function collapse(text: string | undefined): string | undefined {
 
 // What Claude sees (D-8, "Rules in full" > Claude request). A client title skips lookup, so
 // Claude gets that title and the URL only. Otherwise an X post with author and text is the
-// `x` shape, a usable looked-up title is `titled`, and anything else is `untitled`. An X post
-// with no text of its own is `untitled` with the URL only, never the link as fake post text.
+// `x` shape, a usable looked-up title is `titled`, and anything else is `untitled`.
 export function toClaudeInput(job: EnrichJob, lookup: LookupResult): ClaudeInput {
   const url = job.storedUrl;
   if (job.clientTitle !== undefined) return { shape: "titled", title: job.clientTitle, url };
-  if (isNoTextX(lookup)) return { shape: "untitled", url };
   const text = collapse(lookup.description);
   const author = collapse(lookup.author);
   if (job.kind === "x" && author && text) {
@@ -141,6 +130,7 @@ type ClaudeStage = {
   title: string | null;
   tagNames: string[];
   claude: boolean; // Claude answered with usable output
+  reason?: "no_text_x"; // why Claude was skipped on purpose, logged on `enrich`
 };
 
 const ABANDONED = Symbol("abandoned");
@@ -164,6 +154,9 @@ async function untilAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | ty
 // failure logs `enrich_failed{stage: "schema"}` and skips Claude; an empty option list skips
 // Claude (a zero-length enum would 400, R4); a Claude failure was already logged by claude.ts;
 // the deadline logs `enrich_deadline`. Every path goes on to the re-read and the patch.
+// SAT-37: an X post with no text of its own (and no client title, which skips lookup) skips
+// this stage outright. The stored URL is `x.com/i/status/<id>`, so Claude would have nothing
+// to go on and would invent a contentless Name and guess tags. The fallback Name stays.
 async function claudeStage(
   job: EnrichJob,
   lookup: LookupResult,
@@ -172,6 +165,7 @@ async function claudeStage(
   start: number,
 ): Promise<ClaudeStage> {
   const none = (options: TagOptions | null): ClaudeStage => ({ options, title: null, tagNames: [], claude: false });
+  if (isNoTextX(lookup)) return { ...none(null), reason: "no_text_x" };
 
   let options: TagOptions;
   try {
@@ -229,8 +223,7 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
     const props: Properties = {};
 
     // R2: Claude's title gets the same hygiene as a looked-up one; empty means none.
-    const name =
-      usableTitle(claudeTitle(claude.title, lookup), job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
+    const name = usableTitle(claude.title, job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
     if (name !== null && nameUnchanged(job, currentName(page.properties))) {
       Object.assign(props, titleProp(name));
     }
@@ -254,6 +247,7 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
         ms: Date.now() - start,
         patched,
         claude: claude.claude,
+        ...(claude.reason ? { reason: claude.reason } : {}),
         tags: patched ? tags.length : 0,
       });
 

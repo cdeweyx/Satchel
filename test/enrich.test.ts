@@ -1236,7 +1236,7 @@ describe("lookupTitle dispatch", () => {
 });
 
 // SAT-37: a post whose text is only a link (Aaron Levie's x.com/levie/status/2048950940661932319)
-// has no post text, like a media-only post. No Name from the lookup, Claude gets the URL only.
+// has no post text, like a media-only post. No Name from the lookup, and Claude is skipped.
 describe("SAT-37 criterion 1: a link-only X post has no post text", () => {
   const twitterbotOnly = (record: Record_, description: string) => {
     network.use(
@@ -1273,16 +1273,22 @@ describe("SAT-37 criterion 1: a link-only X post has no post text", () => {
     });
   });
 
-  it("oEmbed: real text before the link keeps its title", async () => {
+  it.each([
+    ["real text before the link", 'Worth a read: <a href="https://t.co/Lv1eB0x">box.com/blog/ai-agents</a>'],
+    ["a word with a dot and an ellipsis but no path", "Node.js…"],
+    ["a word with a dot", "Node.js"],
+    ["a bare domain", "box.com"],
+  ])("oEmbed: %s is post text, so it keeps its title", async (_label, paragraph) => {
     captureLogs();
     const { seen, record } = recorder();
-    mockOembed(record, xOembed('Worth a read: <a href="https://t.co/Lv1eB0x">box.com/blog/ai-agents</a>'));
+    mockOembed(record, xOembed(paragraph));
     mockNotion(record, { name: `X post ${X_ID}` });
 
     await runInWaitUntil(xJob());
 
+    const text = paragraph.replace(/<[^>]*>/g, "");
     expect(seen.find((s) => s.method === "PATCH")!.body).toMatchObject({
-      properties: nameProp("Naval: Worth a read: box.com/blog/ai-agents"),
+      properties: nameProp(`Naval: ${text}`),
     });
   });
 
@@ -1296,98 +1302,61 @@ describe("SAT-37 criterion 1: a link-only X post has no post text", () => {
 
     expect(seen.some((s) => s.method === "PATCH")).toBe(false);
     expect(logs()).toEqual([
-      expect.objectContaining({ event: "enrich", ok: true, source: "x-twitterbot", patched: false }),
+      expect.objectContaining({
+        event: "enrich",
+        ok: true,
+        source: "x-twitterbot",
+        patched: false,
+        claude: false,
+        reason: "no_text_x",
+      }),
     ]);
-  });
-
-  it("toClaudeInput: a link-only X lookup is the untitled shape, URL only", () => {
-    const lookup = {
-      title: "Aaron Levie: https://t.co/Lv1eB0x",
-      description: "https://t.co/Lv1eB0x",
-      author: "Aaron Levie",
-      handle: "levie",
-      url: X_CANONICAL,
-      source: "x-oembed" as const,
-      bytesRead: 400,
-    };
-    expect(toClaudeInput(xJob(), lookup)).toEqual({ shape: "untitled", url: X_STORED });
   });
 });
 
-describe("SAT-37 criteria 2 and 3: Claude on a link-only X post", () => {
-  const LINK_ONLY = '<a href="https://t.co/Lv1eB0x">https://t.co/Lv1eB0x</a>';
-
-  it("Claude gets the URL only; a 'shares a link with no text' title is dropped, its tags still land", async () => {
+describe("SAT-37 criteria 2 and 3 (fix round 1): Claude on a no-text X post", () => {
+  it.each([
+    ["link-only", '<a href="https://t.co/Lv1eB0x">https://t.co/Lv1eB0x</a>'],
+    ["media-only", '<a href="https://t.co/AbC123">pic.twitter.com/AbC123</a>'],
+  ])("%s, no client title: no schema read, no Anthropic request, no Name, no Tags", async (_label, paragraph) => {
     const logs = captureLogs();
     const { seen, record } = recorder();
-    mockOembed(record, xOembed(LINK_ONLY));
+    mockOembed(record, xOembed(paragraph));
     mockSchema(record, OPTIONS);
-    mockClaude(record, () =>
-      claudeAnswer({ title: "Aaron Levie: Shares a Link With No Accompanying Text", tags: ["AI", "Product"] }),
-    );
+    mockClaude(record, () => claudeAnswer({ title: "X Post", tags: ["AI"] }));
     mockNotion(record, { name: `X post ${X_ID}`, tags: [] });
 
     await runInWaitUntil(xJob());
 
-    const claudeBody = seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody;
-    expect(claudeBody.messages).toEqual([{ role: "user", content: `Title: (none)\nURL: ${X_STORED}` }]);
-    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
-      properties: {
-        [PROPS.url]: { url: X_CANONICAL },
-        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }, { id: "opt-product" }] },
-      },
-    });
-    expect(logs()).toEqual([expect.objectContaining({ event: "enrich", ok: true, claude: true, tags: 2 })]);
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${OEMBED}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    expect(seen[2]!.body).toEqual({ properties: { [PROPS.url]: { url: X_CANONICAL } } });
+    expect(logs()).toEqual([
+      expect.objectContaining({ event: "enrich", ok: true, claude: false, reason: "no_text_x", tags: 0 }),
+    ]);
   });
 
-  it("a real title from Claude is written through the Name guard, with its tags", async () => {
-    captureLogs();
+  it("a no-text X post saved with a client title: lookup skipped, Claude gets the titled shape, its tags land", async () => {
+    const logs = captureLogs();
     const { seen, record } = recorder();
-    mockOembed(record, xOembed(LINK_ONLY));
+    const clientTitle = 'Aaron Levie on X: "https://t.co/Lv1eB0x" / X';
     mockSchema(record, OPTIONS);
     mockClaude(record, () => claudeAnswer({ title: "Aaron Levie: Box on AI Agents", tags: ["AI"] }));
-    mockNotion(record, { name: `X post ${X_ID}`, tags: [] });
+    mockNotion(record, { name: clientTitle, tags: [] });
 
-    await runInWaitUntil(xJob());
+    await runInWaitUntil(xJob({ clientTitle }));
 
+    expect(seen.some((s) => s.url.startsWith(OEMBED))).toBe(false);
     const claudeBody = seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody;
-    expect(claudeBody.messages[0]!.content).toBe(`Title: (none)\nURL: ${X_STORED}`);
+    expect(claudeBody.messages).toEqual([{ role: "user", content: `Title: ${clientTitle}\nURL: ${X_STORED}` }]);
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
-      properties: {
-        ...nameProp("Aaron Levie: Box on AI Agents"),
-        [PROPS.url]: { url: X_CANONICAL },
-        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] },
-      },
+      properties: { ...nameProp("Aaron Levie: Box on AI Agents"), [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] } },
     });
-  });
-
-  it("a Claude title is still dropped when the row was renamed: no Name either way (guard as today)", async () => {
-    captureLogs();
-    const { seen, record } = recorder();
-    mockOembed(record, xOembed(LINK_ONLY));
-    mockSchema(record, OPTIONS);
-    mockClaude(record, () => claudeAnswer({ title: "Aaron Levie: Box on AI Agents", tags: ["AI"] }));
-    mockNotion(record, { name: "My own name", tags: [] });
-
-    await runInWaitUntil(xJob());
-
-    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
-      properties: { [PROPS.url]: { url: X_CANONICAL }, [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] } },
-    });
-  });
-
-  it("the 'no text' title rule only applies to no-text X posts: a real post keeps such a title", async () => {
-    captureLogs();
-    const { seen, record } = recorder();
-    mockOembed(record, xOembed("Sharing this link without comment because it speaks for itself"));
-    mockSchema(record, OPTIONS);
-    mockClaude(record, () => claudeAnswer({ title: "Naval: Shares a Link Without Comment", tags: ["AI"] }));
-    mockNotion(record, { name: `X post ${X_ID}`, tags: [] });
-
-    await runInWaitUntil(xJob());
-
-    expect(seen.find((s) => s.method === "PATCH")!.body).toMatchObject({
-      properties: nameProp("Naval: Shares a Link Without Comment"),
-    });
+    const line = logs()[0]!;
+    expect(line).toMatchObject({ event: "enrich", ok: true, claude: true, tags: 1 });
+    expect(line).not.toHaveProperty("reason");
   });
 });
