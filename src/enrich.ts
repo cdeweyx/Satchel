@@ -15,8 +15,11 @@ const LOOKUP_STAGE_MS = 5000;
 const REREAD_MS = 3000;
 const PATCH_MS = 3000;
 
-// A media-only X post: oEmbed's text is just the pic.twitter.com link (lead ruling R2).
-const MEDIA_ONLY_X = /^.+?: pic\.twitter\.com\/\S+$/;
+// A media-only X post, tested on the post text alone (never the `author: ` title, so a
+// real post ending in "...: pic.twitter.com/x" keeps its title). oEmbed shows the image as
+// a pic.twitter.com link; Twitterbot's og:description can be just the t.co link.
+const MEDIA_ONLY_OEMBED = /^pic\.twitter\.com\/\S+$/;
+const MEDIA_ONLY_TWITTERBOT = /^(?:pic\.twitter\.com\/\S+|https:\/\/t\.co\/\S+)$/;
 
 type Stage = "reread" | "patch";
 
@@ -26,14 +29,26 @@ async function claudeStage(_job: EnrichJob, _lookup: LookupResult): Promise<stri
   return null;
 }
 
-// R2: whitespace collapsed (X `<br>` newlines included) and trimmed. Empty, URL-equal and
-// media-only X titles carry nothing, so they're no title. titleProp truncates at 2000.
+// R2: whitespace collapsed (X `<br>` newlines included) and trimmed. Empty and URL-equal
+// titles carry nothing, so they're no title. titleProp truncates at 2000.
 export function usableTitle(title: string | null | undefined, storedUrl: string): string | null {
   if (typeof title !== "string") return null;
   const clean = title.replace(/\s+/g, " ").trim();
   if (isMissingTitle(clean, storedUrl, storedUrl)) return null;
-  if (MEDIA_ONLY_X.test(clean)) return null;
   return clean;
+}
+
+// R2: an X lookup whose post text is only the media link has no title worth writing.
+export function isMediaOnlyX(lookup: LookupResult): boolean {
+  const text = (lookup.description ?? "").replace(/\s+/g, " ").trim();
+  if (lookup.source === "x-oembed") return MEDIA_ONLY_OEMBED.test(text);
+  if (lookup.source === "x-twitterbot") return MEDIA_ONLY_TWITTERBOT.test(text);
+  return false;
+}
+
+// The looked-up title for Name purposes, after R2 hygiene.
+function lookedUpTitle(lookup: LookupResult, storedUrl: string): string | null {
+  return isMediaOnlyX(lookup) ? null : usableTitle(lookup.title, storedUrl);
 }
 
 // R4: the Name's plain text, joined across its rich-text runs. Null when the shape is off,
@@ -64,10 +79,13 @@ function currentUrl(properties: Record<string, unknown> | undefined): string | n
 }
 
 // R5 plus the lead's PR #17 rulings: X only, oEmbed's canonical when it differs from what's
-// stored, and only while the row's URL is still the stored one (an edit in Notion wins).
-// urlProp's 2000 guard (or any other throw) drops just the URL, never the Name.
+// stored, only when it names the same post id, and only while the row's URL is still the
+// stored one (an edit in Notion wins). urlProp's 2000 guard (or any other throw) drops just
+// the URL, never the Name.
 function urlSwap(job: EnrichJob, lookup: LookupResult, now: string | null): Properties {
   if (job.kind !== "x" || !lookup.url || lookup.url === job.storedUrl) return {};
+  const id = /\/status\/(\d+)$/.exec(job.storedUrl)?.[1];
+  if (!id || !new RegExp(`/status/${id}(?:$|\\D)`).test(lookup.url)) return {};
   if (now !== job.storedUrl) return {};
   try {
     return urlProp(lookup.url);
@@ -107,7 +125,7 @@ export async function enrich(job: EnrichJob, env: Env): Promise<void> {
 
     const props: Properties = {};
 
-    const name = usableTitle(claudeTitle, job.storedUrl) ?? usableTitle(lookup.title, job.storedUrl);
+    const name = usableTitle(claudeTitle, job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
     if (name !== null && nameUnchanged(job, currentName(page.properties))) {
       Object.assign(props, titleProp(name));
     }

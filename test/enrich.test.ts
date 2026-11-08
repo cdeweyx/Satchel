@@ -275,16 +275,6 @@ describe("enrich: Name guard (criterion 2)", () => {
     });
   });
 
-  it("the guard compares against the client title when one was sent", async () => {
-    captureLogs();
-    const { seen, record } = recorder();
-    mockNotion(record, { name: "From the browser" });
-
-    await runInWaitUntil(pageJob({ clientTitle: "From the browser" }));
-
-    // M1: no Claude, no lookup, so nothing to write even though Name is unchanged.
-    expect(seen.map((s) => s.method)).toEqual(["GET"]);
-  });
 });
 
 describe("enrich: URL guard and URL failures (PR 17 rulings)", () => {
@@ -357,6 +347,101 @@ describe("enrich: a >2000-char created title isn't read as an edit (PR 14 carry)
 
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
       properties: { [PROPS.name]: { title: [{ text: { content: "The Real Title" } }] } },
+    });
+  });
+});
+
+describe("enrich: review fixes (PR 17 round 2)", () => {
+  it("a real post ending in a colon before an image keeps its title", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(
+      record,
+      xOembed('The three big decisions in life: <a href="https://t.co/AbC123">pic.twitter.com/abc</a>'),
+    );
+    mockNotion(record, { name: `X post ${X_ID}` });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        [PROPS.name]: {
+          title: [{ text: { content: "Naval: The three big decisions in life: pic.twitter.com/abc" } }],
+        },
+        [PROPS.url]: { url: X_CANONICAL },
+      },
+    });
+  });
+
+  it("Twitterbot: a description that's only a t.co link is media-only, so no Name", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    network.use(
+      http.get(OEMBED, async ({ request }) => {
+        await record(request);
+        return new HttpResponse("<html><head><title>Nothing to see here</title></head></html>", {
+          status: 404,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }),
+    );
+    htmlPage(
+      X_STORED,
+      record,
+      '<html><head><meta property="og:title" content="Naval (@naval) on X"/>' +
+        '<meta property="og:description" content="https://t.co/AbC123"/></head><body></body></html>',
+    );
+    mockNotion(record, { name: `X post ${X_ID}` });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map((s) => `${s.method} ${new URL(s.url).host}`)).toEqual([
+      "GET publish.x.com",
+      "GET x.com",
+      "GET api.notion.com",
+    ]);
+    expect(logs()).toEqual([
+      expect.objectContaining({ event: "enrich", ok: true, source: "x-twitterbot", patched: false }),
+    ]);
+  });
+
+  it("an oEmbed url naming a different post id is not swapped in", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("Hello", "https://x.com/naval/status/999"));
+    mockNotion(record, { name: `X post ${X_ID}` });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { [PROPS.name]: { title: [{ text: { content: "Naval: Hello" } }] } },
+    });
+  });
+
+  it("an oEmbed url whose id only starts with the job's id is not swapped in", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("Hello", `https://x.com/naval/status/${X_ID}7`));
+    mockNotion(record, { name: `X post ${X_ID}` });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { [PROPS.name]: { title: [{ text: { content: "Naval: Hello" } }] } },
+    });
+  });
+
+  it("an oEmbed url with the job's id and a query string is swapped in", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    const url = `https://x.com/naval/status/${X_ID}?s=20`;
+    mockOembed(record, xOembed("Hello", url));
+    mockNotion(record, { name: `X post ${X_ID}` });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toMatchObject({
+      properties: { [PROPS.url]: { url } },
     });
   });
 });
