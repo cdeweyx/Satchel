@@ -1,5 +1,5 @@
 // Satchel popup (SAT-20). Keyboard-first: L sends to inbox, R marks as archived,
-// F favorites for 1.5 s after R, esc closes, ? shows the keys. Every action also works
+// F favorites for 1.5 s after R, esc closes. Every action also works
 // with a click, and arrow keys / Tab / Enter work on the rows.
 //
 // The service worker owns every save (contract at the top of background.js). The popup
@@ -205,12 +205,6 @@ function openSetup() {
   closePopup();
 }
 
-function toggleKeys() {
-  const keys = $("keys");
-  keys.hidden = !keys.hidden;
-  $("foot-default").hidden = !keys.hidden;
-}
-
 function reducedMotion() {
   try {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -242,11 +236,6 @@ function onKey(event) {
   if (key === "Escape") {
     event.preventDefault();
     closePopup();
-    return;
-  }
-  if (key === "?") {
-    event.preventDefault();
-    toggleKeys();
     return;
   }
   if (state === "setup") {

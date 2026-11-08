@@ -342,7 +342,8 @@ describe("at rest", () => {
     expect($("row-read").visibleText).toBe("Mark as archived R");
     expect(isShown("row-favorite")).toBe(false);
     expect(isShown("setup")).toBe(false);
-    expect($("foot-default").visibleText).toBe("? for keys esc close");
+    expect($("close").parent!.visibleText).toBe("esc close");
+    expect($("popup").visibleText).not.toContain("?");
     expect(doc.activeElement).toBe($("row-later"));
     expect(sent).toEqual([]);
   });
@@ -398,7 +399,7 @@ describe("L sends later", () => {
     expect(isShown("stamp-later")).toBe(true);
     expect($("row-later").hasClass("is-saved")).toBe(true);
     expect($("status").textContent).toBe("Saved");
-    expect($("foot-default").visibleText).toBe("? for keys esc close"); // no timing copy
+    expect($("close").parent!.visibleText).toBe("esc close"); // no timing copy
     expect($("row-read").disabled).toBe(true);
 
     await wait(349);
@@ -440,7 +441,7 @@ describe("R sends read and offers Favorite", () => {
     expect(isShown("row-favorite")).toBe(true);
     expect($("row-favorite").disabled).toBe(false);
     expect($("row-favorite").visibleText).toBe("Favorite F");
-    expect($("foot-default").visibleText).toBe("? for keys esc close"); // no how-it-works copy
+    expect($("close").parent!.visibleText).toBe("esc close"); // no how-it-works copy
   });
 
   it("F within 1.5 s sends favorite after read, then stamps the Favorite row once both replies are ok", async () => {
@@ -525,7 +526,7 @@ describe("R sends read and offers Favorite", () => {
     });
   }
 
-  it("Shift alone (on the way to ?) doesn't end the window", async () => {
+  it("Shift alone doesn't end the window", async () => {
     await open();
     await press("r");
     await press("Shift", { shiftKey: true });
@@ -697,17 +698,15 @@ describe("double presses send once", () => {
 // ---------- keyboard model ----------
 
 describe("keys", () => {
-  it("? toggles the one-line key sheet", async () => {
+  it("? does nothing: no key sheet, nothing sent, nothing closed", async () => {
     await open();
-    expect(isShown("keys")).toBe(false);
+    const footer = $("close").parent!.visibleText;
     await press("?", { shiftKey: true });
-    expect(isShown("keys")).toBe(true);
-    expect(isShown("foot-default")).toBe(false);
-    expect($("keys").visibleText).toBe("L inbox R archive F favorite esc close");
-    await press("?", { shiftKey: true });
-    expect(isShown("keys")).toBe(false);
-    expect(isShown("foot-default")).toBe(true);
+    expect($("popup").getAttribute("data-state")).toBe("rest");
+    expect($("close").parent!.visibleText).toBe(footer);
+    expect(doc.getElementById("keys")).toBeNull();
     expect(sent).toEqual([]);
+    expect(closedAt).toBeNull();
   });
 
   it("arrow keys move focus between the rows and Enter activates once", async () => {

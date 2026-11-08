@@ -216,13 +216,6 @@ body {
   line-height: 12px;
 }
 
-.cap-small {
-  width: 18px;
-  height: 18px;
-  font-size: calc(var(--satchel-font-size) * 5 / 7); /* 10 */
-  line-height: 12px;
-}
-
 /* ---- the SAVED stamp ---- */
 
 .stamp {
@@ -303,27 +296,19 @@ body {
 /* ---- footer ---- */
 
 .foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 18px;
   border-top: 1px solid var(--satchel-rule);
   padding: 10px 16px;
   color: var(--satchel-muted);
 }
 
-.foot-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 18px;
-}
-
-.close,
-.key {
+.close {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.keys .cap-small {
-  color: var(--satchel-fg);
 }
 
 .visually-hidden {
