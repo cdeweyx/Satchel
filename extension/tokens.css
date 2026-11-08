@@ -1,0 +1,65 @@
+/* Satchel tokens: The Maker's Stamp. Source: brand/DESIGN.md and the Paper
+   "Final" page. The only place under extension/ that holds a hex value. */
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fonts/hanken-grotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Besley";
+  font-style: normal;
+  font-weight: 800;
+  font-display: block;
+  src: url("fonts/besley-800-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-400-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/ibm-plex-mono-500-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --satchel-bg: #F4F1EB; /* flax paper */
+  --satchel-fg: #1E1A16; /* ink */
+  --satchel-muted: #6B6157;
+  --satchel-rule: #C9C0B2; /* rules and keycap stroke */
+  --satchel-accent: #2F4DA0; /* stamp blue: the stamp and Saved only */
+  --satchel-favorite: #B5883A; /* brass: the star, once set */
+  --satchel-danger: #1E1A16; /* errors are ink, never red */
+  --satchel-radius: 6px;
+  --satchel-font: "Hanken Grotesk", system-ui, sans-serif;
+  --satchel-font-display: "Besley", Georgia, serif;
+  --satchel-font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --satchel-font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --satchel-bg: #1E1A16; /* dark saddle */
+    --satchel-fg: #EDE7DD;
+    --satchel-muted: #A89C8C;
+    --satchel-rule: #3C342C;
+    --satchel-accent: #8AA2E6;
+    --satchel-favorite: #B5883A;
+    --satchel-danger: #EDE7DD;
+  }
+}
