@@ -37,4 +37,7 @@ if ! grep -qxF -- "$wanted" <<<"$first_lines"; then
   refuse "no Ready verdict for $head_sha"
 fi
 
-gh pr merge "$pr" --squash --delete-branch --match-head-commit "$head_sha"
+# No --delete-branch: gh then tries to check out main locally, which fails in a
+# worktree when main is checked out elsewhere. Delete the remote branch directly.
+gh pr merge "$pr" --squash --match-head-commit "$head_sha"
+git push origin --delete "$head_ref" || echo "merge.sh: merged, but couldn't delete remote branch $head_ref" >&2
