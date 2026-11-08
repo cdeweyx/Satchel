@@ -5,7 +5,7 @@
 // Never throws: any failure (network, abort, timeout, bad status, wrong content type,
 // unexpected shape) returns null, because the save path relies on it (SAT-12).
 
-import { X_LINK, isXPostMedia } from "../preview";
+import { isXPostMedia, xLinkPattern } from "../preview";
 
 export type XTitle = {
   title: string;
@@ -17,6 +17,10 @@ export type XTitle = {
   // SAT-45: the text is an X Article's title, read from x.com's page because oEmbed's post
   // text was only links (SAT-43). Absent on every other result.
   article?: true;
+  // SAT-55: the display URLs ("box.com/blog/x…") X anchored with t.co in oEmbed's post text,
+  // so isOnlyLinks and the page-body text strip them as links. Present only when there's one,
+  // and only while `description` is that oEmbed text.
+  links?: string[];
   // SAT-48: the post's own photo (pbs.twimg.com/media/…) from x.com's og:image, when read.
   image?: string;
   bytesRead: number;
@@ -59,6 +63,14 @@ const NAMED_ENTITIES: Record<string, string> = {
   quot: '"',
   apos: "'",
   nbsp: " ",
+  // SAT-55: the typographic ones X leaves named in post text.
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
 };
 
 function fromCodePoint(n: number, original: string): string {
@@ -66,7 +78,8 @@ function fromCodePoint(n: number, original: string): string {
   return String.fromCodePoint(n);
 }
 
-// Enough for what X emits: the five XML entities, nbsp, and numeric references.
+// Enough for what X emits: the five XML entities, nbsp, the dashes, ellipsis and curly quotes
+// (SAT-55), and numeric references. An unknown name stays as written.
 function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, body: string) => {
     if (body[0] === "#") {
@@ -77,14 +90,29 @@ function decodeEntities(s: string): string {
   });
 }
 
-// Inner text of the first <p> in oEmbed's html: <br> becomes a newline, other tags
-// (the t.co <a> links) are dropped but their text kept, then entities are decoded.
-// Tags go before entities so an escaped `&lt;b&gt;` in the post survives as text.
-function firstParagraphText(html: string): string {
+// Tags out, then entities decoded. Tags go before entities so an escaped `&lt;b&gt;` in the
+// post survives as text.
+function htmlText(html: string): string {
+  return decodeEntities(html.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]*>/g, ""));
+}
+
+// X wraps every URL in post text in a t.co anchor; hashtags and mentions link to x.com.
+const T_CO_ANCHOR = /<a\b[^>]*\bhref=["']https?:\/\/t\.co\/[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+const SHOWN_AS_URL = new RegExp(`^${xLinkPattern()}$`, "i");
+
+// The first <p> in oEmbed's html. `text` is its inner text: <br> becomes a newline, other
+// tags (the t.co <a> links) are dropped but their text kept, entities decoded, trimmed.
+// SAT-55: `links` is the text of each t.co anchor that shows a display URL ("box.com/blog/x…")
+// rather than a full URL or pic.twitter.com link, which read as links from the text alone.
+function firstParagraph(html: string): { text: string; links: string[] } {
   const m = /<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(html);
-  if (!m || m[1] === undefined) return "";
-  const text = m[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]*>/g, "");
-  return decodeEntities(text).trim();
+  if (!m || m[1] === undefined) return { text: "", links: [] };
+  const links: string[] = [];
+  for (const a of m[1].matchAll(T_CO_ANCHOR)) {
+    const shown = htmlText(a[1] ?? "").trim();
+    if (shown && !SHOWN_AS_URL.test(shown) && !links.includes(shown)) links.push(shown);
+  }
+  return { text: htmlText(m[1]).trim(), links };
 }
 
 function handleFromAuthorUrl(authorUrl: unknown): string | undefined {
@@ -95,14 +123,13 @@ function handleFromAuthorUrl(authorUrl: unknown): string | undefined {
 
 // An X post with no text of its own: only media or links (SAT-12, SAT-37). Tested on the
 // post text alone (never the `author: ` title, so a real post ending in "...: pic.twitter.com/x"
-// keeps its title). A link reads as X shows it (X_LINK in preview.ts, shared with SAT-52's
-// page-body text): a full URL (t.co or any other, Twitterbot's og:description), a
-// pic.twitter.com media link, or a display URL (host plus a path, maybe cut with "…"). A
-// display URL needs the path, so "Node.js", "Node.js…" and "box.com" stay text.
-const NO_POST_TEXT = new RegExp(`^${X_LINK}(?: ${X_LINK})*$`, "i");
-
-export function isOnlyLinks(text: string | undefined): boolean {
-  return NO_POST_TEXT.test((text ?? "").replace(/\s+/g, " ").trim());
+// keeps its title). A link reads as X shows it (xLinkPattern in preview.ts, shared with
+// SAT-52's page-body text): a full URL (t.co or any other, Twitterbot's og:description), a
+// pic.twitter.com media link, or one of `links`, the display URLs X anchored (lookupX's
+// `links`). SAT-55: a display URL without its anchor is text, so "Node.js/Deno" stays text.
+export function isOnlyLinks(text: string | undefined, links?: readonly string[]): boolean {
+  const link = xLinkPattern(links);
+  return new RegExp(`^${link}(?: ${link})*$`, "i").test((text ?? "").replace(/\s+/g, " ").trim());
 }
 
 type Attempt = { result: XTitle | null; bytesRead: number };
@@ -126,7 +153,7 @@ async function viaOembed(id: string, signal: AbortSignal): Promise<Attempt> {
     if (typeof data !== "object" || data === null || "errors" in data) return { result: null, bytesRead };
     const body = data as Record<string, unknown>;
     const author = typeof body.author_name === "string" ? body.author_name.trim() : "";
-    const text = typeof body.html === "string" ? firstParagraphText(body.html) : "";
+    const { text, links } = typeof body.html === "string" ? firstParagraph(body.html) : { text: "", links: [] };
     // A profile or timeline embed has `title: ""` and no post paragraph: no title.
     if (!author || !text) return { result: null, bytesRead };
     const url = typeof body.url === "string" && body.url.startsWith("https://") ? body.url : undefined;
@@ -138,6 +165,7 @@ async function viaOembed(id: string, signal: AbortSignal): Promise<Attempt> {
         description: text,
         author,
         ...(handle ? { handle } : {}),
+        ...(links.length > 0 ? { links } : {}),
         source: "x-oembed",
         bytesRead,
       },
@@ -290,7 +318,7 @@ export async function lookupX(id: string, signal: AbortSignal): Promise<XTitle |
     const started = Date.now();
     const first = await viaOembed(id, signal);
     if (first.result) {
-      const onlyLinks = isOnlyLinks(first.result.description);
+      const onlyLinks = isOnlyLinks(first.result.description, first.result.links);
       const photoLink = MEDIA_LINK.test(first.result.description ?? "");
       if ((!onlyLinks && !photoLink) || signal.aborted) return first.result;
       if (!onlyLinks) {
@@ -307,8 +335,10 @@ export async function lookupX(id: string, signal: AbortSignal): Promise<XTitle |
       const image = page.ok && page.image ? { image: page.image } : {};
       const text = page.ok ? pageText(page.ogTitle, page.ogDescription) : null;
       if (!text) return { ...first.result, ...image, bytesRead };
+      // The page's text replaces oEmbed's, so oEmbed's anchored links no longer apply.
+      const { links: _oembedLinks, ...rest } = first.result;
       return {
-        ...first.result,
+        ...rest,
         title: `${first.result.author}: ${text}`,
         description: text,
         article: true,

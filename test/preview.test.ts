@@ -49,15 +49,17 @@ describe("SAT-48 previewBlock: lookup result to the one block, or none", () => {
   });
 
   it("SAT-52: an X post with only links, or no text, gets nothing", () => {
-    const x = (description?: string): LookupResult => ({
+    const x = (description?: string, links?: string[]): LookupResult => ({
       title: `X: ${description}`,
       ...(description === undefined ? {} : { description }),
+      ...(links ? { links } : {}),
       source: "x-oembed",
       bytesRead: 1,
     });
     expect(previewBlock(x("https://t.co/Lv1eB0x"))).toBeNull();
     expect(previewBlock(x("pic.twitter.com/AbC123"))).toBeNull();
-    expect(previewBlock(x("box.com/blog/ai-agents-a… pic.twitter.com/b"))).toBeNull();
+    // SAT-55: the display URL is a link because X anchored it (`links`).
+    expect(previewBlock(x("box.com/blog/ai-agents-a… pic.twitter.com/b", ["box.com/blog/ai-agents-a…"]))).toBeNull();
     expect(previewBlock(x("  "))).toBeNull();
     // Review fix: what's left after the links has no letter or digit.
     expect(previewBlock(x("— https://t.co/a"))).toBeNull();
@@ -68,12 +70,44 @@ describe("SAT-48 previewBlock: lookup result to the one block, or none", () => {
   });
 
   it("SAT-52: X text keeps words that only look like hosts, and is cut to about 300 characters", () => {
-    const x = (description: string): LookupResult => ({ title: "t", description, source: "x-oembed", bytesRead: 1 });
-    expect(previewBlock(x("Node.js and box.com are text; example.com/path isn't"))).toEqual(
+    const x = (description: string, links?: string[]): LookupResult => ({
+      title: "t",
+      description,
+      ...(links ? { links } : {}),
+      source: "x-oembed",
+      bytesRead: 1,
+    });
+    // SAT-55: example.com/path is a link because X anchored it (`links`), not from its shape.
+    expect(previewBlock(x("Node.js and box.com are text; example.com/path isn't", ["example.com/path"]))).toEqual(
       paragraph("Node.js and box.com are text; isn't"),
     );
     const long = `${"word ".repeat(70)}https://t.co/z`;
     expect(previewBlock(x(long))).toEqual(paragraph(`${"word ".repeat(60).trimEnd()}…`));
+  });
+
+  it("SAT-55: X text keeps words shaped like a host plus a path unless X anchored them", () => {
+    const x = (description: string, links?: string[]): LookupResult => ({
+      title: "t",
+      description,
+      ...(links ? { links } : {}),
+      source: "x-oembed",
+      bytesRead: 1,
+    });
+    expect(previewBlock(x("Node.js/Deno ship today"))).toEqual(paragraph("Node.js/Deno ship today"));
+    expect(previewBlock(x("Node.js/Deno ship today https://t.co/a pic.twitter.com/b"))).toEqual(
+      paragraph("Node.js/Deno ship today"),
+    );
+    expect(previewBlock(x("Node.js/Deno ship today deno.com/blog/v2…", ["deno.com/blog/v2…"]))).toEqual(
+      paragraph("Node.js/Deno ship today"),
+    );
+    // An anchored link only strips its own text, and a blank anchor strips nothing.
+    expect(previewBlock(x("See example.com/a and example.com/b", ["example.com/a"]))).toEqual(
+      paragraph("See and example.com/b"),
+    );
+    expect(previewBlock(x("Node.js/Deno ship today", [""]))).toEqual(paragraph("Node.js/Deno ship today"));
+    expect(previewBlock({ ...x("Node.js/Deno ship today"), source: "x-twitterbot" })).toEqual(
+      paragraph("Node.js/Deno ship today"),
+    );
   });
 
   it("SAT-52: an X Article with no image is a paragraph of its article title; with an image, the image", () => {

@@ -56,7 +56,7 @@ export function usableTitle(title: string | null | undefined, storedUrl: string)
 // text of a link-only post (an X Article), so this is a post the page doesn't describe either.
 export function isNoTextX(lookup: LookupResult): boolean {
   if (lookup.source !== "x-oembed" && lookup.source !== "x-twitterbot") return false;
-  return isOnlyLinks(lookup.description);
+  return isOnlyLinks(lookup.description, lookup.links);
 }
 
 // SAT-42: an X post's Name is the post text alone, no author. lookupX's raw title is

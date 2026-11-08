@@ -31,17 +31,29 @@ export function isXPostMedia(url: string | null | undefined): boolean {
   return hostname === "pbs.twimg.com" && pathname.startsWith("/media/");
 }
 
-// A link as X shows it in post text: a full URL (t.co or any other), a pic.twitter.com media
-// link, or a display URL (host plus a path, maybe cut with "…"). A display URL needs the path,
-// so "Node.js" and "box.com" stay text. Shared with isOnlyLinks in title/x.ts (SAT-37).
-export const X_LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*)`;
-const X_LINK_TOKEN = new RegExp(String.raw`(?<!\S)${X_LINK}`, "gi");
+/**
+ * A link as X shows it in post text, as a regex source: a full URL (t.co or any other), a
+ * pic.twitter.com media link, or one of `links`, the display URLs X anchored in the oEmbed
+ * html (lookupX's `links`, like "box.com/blog/ai-agents-a…"). SAT-55: a display URL is a link
+ * only when X anchored it, never from its shape, so "Node.js/Deno" stays text. Each match runs
+ * to the end of its token. Shared with isOnlyLinks in title/x.ts (SAT-37).
+ */
+export function xLinkPattern(links: readonly string[] = []): string {
+  const anchored = links.filter((l) => l.trim() !== "").map((l) => `${escapeRegExp(l.trim())}\\S*`);
+  return `(?:${[String.raw`https?:\/\/\S+`, String.raw`pic\.twitter\.com\/\S+`, ...anchored].join("|")})`;
+}
 
-// SAT-52: an X post's text for its page body: every link (a whole whitespace-separated token)
-// removed, whitespace collapsed, trimmed. "" when what's left has no letter or digit (only
-// links, or links plus punctuation or emoji, like "— https://t.co/a" or "👇 https://t.co/a").
-export function xPostText(text: string | null | undefined): string {
-  const clean = (text ?? "").replace(X_LINK_TOKEN, " ").replace(/\s+/g, " ").trim();
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// SAT-52: an X post's text for its page body: every link (a whole whitespace-separated token,
+// see xLinkPattern) removed, whitespace collapsed, trimmed. "" when what's left has no letter
+// or digit (only links, or links plus punctuation or emoji, like "— https://t.co/a" or
+// "👇 https://t.co/a").
+export function xPostText(text: string | null | undefined, links?: readonly string[]): string {
+  const token = new RegExp(`(?<!\\S)${xLinkPattern(links)}`, "gi");
+  const clean = (text ?? "").replace(token, " ").replace(/\s+/g, " ").trim();
   return /[\p{L}\p{N}]/u.test(clean) ? clean : "";
 }
 
@@ -62,7 +74,7 @@ export function summary(text: string, max = SUMMARY_CHARS): string {
  * Else a page's description (og:description, else meta description) is one paragraph, cut to
  * about 300 characters. SAT-52: an X post with no photo is one paragraph of its post text
  * (`description`, the text Claude titles from; an X Article's title for an Article) with its
- * links stripped, cut the same way. A post that's only links gets nothing. Media oEmbed never
+ * links (SAT-55: including the display URLs in `links`) stripped, cut the same way. A post that's only links gets nothing. Media oEmbed never
  * gets a paragraph.
  */
 export function previewBlock(lookup: LookupResult): BodyBlock | null {
@@ -70,7 +82,7 @@ export function previewBlock(lookup: LookupResult): BodyBlock | null {
   if (image && image.length <= MAX_URL) return imageBlock(image);
   const isX = lookup.source === "x-oembed" || lookup.source === "x-twitterbot";
   if (lookup.source !== "page" && !isX) return null;
-  const raw = isX ? xPostText(lookup.description) : (lookup.description ?? "");
+  const raw = isX ? xPostText(lookup.description, lookup.links) : (lookup.description ?? "");
   const text = raw ? summary(raw) : "";
   return text ? paragraphBlock(text) : null;
 }
