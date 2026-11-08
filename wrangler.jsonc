@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "satchel",
+  "main": "src/index.ts",
+  // Newest date the pinned workerd (1.20261104.1) accepts. No nodejs_compat (D-11).
+  "compatibility_date": "2026-11-04",
+  "observability": {
+    "enabled": true
+  },
+  // Not secret, but never committed with real values (docs/handoff.md).
+  // scripts/deploy.sh passes the real IDs with --var at deploy time.
+  "vars": {
+    "NOTION_DATABASE_ID": "set-at-deploy",
+    "NOTION_DATA_SOURCE_ID": "set-at-deploy"
+  },
+  // Typed by `wrangler types` on a clean clone; .dev.vars never changes the types.
+  // Values come from scripts/deploy.sh (--secrets-file) or a local .dev.vars.
+  "secrets": {
+    "required": ["NOTION_TOKEN", "ANTHROPIC_API_KEY", "SATCHEL_KEY"]
+  }
+}
