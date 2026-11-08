@@ -76,7 +76,7 @@ Examples (title → tags):
 - Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product
 - Managing Up → Career
 - Why Are Big Tech Companies So Slow? → Career, Product
-- The Definitive Guide to Mastering Product Sense Interviews → Career, Product
+- A Letter to Our Next PM → Career, Product
 - How to Calm the Anxious Brain → Self-Improvement, Mindfulness
 - The Paradox of "Finding Yourself" → Self-Improvement, Mindfulness
 
