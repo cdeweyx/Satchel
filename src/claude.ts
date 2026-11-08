@@ -17,7 +17,11 @@ export type ClaudeOutput = { title: string; tags: string[] };
 // user's review of real saves and their 512 hand-tagged archive rows (SAT-38, 2026-11-08).
 // The "any page text given" line reads "any description given": we never send page body
 // text (D-8). Four reviewed saves are held out of the examples on purpose, so the live
-// re-check measures the rules, not lookup.
+// re-check measures the rules, not lookup. The 15 examples after the first 7 come from the
+// archive (SAT-40), chosen to show its contrasts: Startups over Growth, Mental Models over
+// Thinking, Product + Career, Mindfulness + Self-Improvement, and mostly one tag. "A Timeless
+// New Year" replaces an original example that turned out to be a scoring row. No example is
+// in the 40-row scoring set (scripts/eval-tags.ts).
 const PROMPT = `You clean up titles for links saved to a personal reading database and pick tags for them.
 
 Title rules:
@@ -38,8 +42,8 @@ Tag rules:
 
 What some tags mean here:
 - Tech: the business and strategy of the tech industry, not anything technical.
-- Product: product management and building products.
-- Career: doing well at work, the craft of your job, teams, interviewing.
+- Product: the most common tag here: building, shipping and thinking about products, and the work of the people who make them (PMs, founders, designers on product teams).
+- Career: doing well at work: craft, growth in a role, teams, hiring, interviewing; often paired with Product.
 - Self-Improvement: life advice and personal habits.
 - Mindfulness: meaning and inner life.
 - Thinking: essays about ideas and how to think.
@@ -48,6 +52,9 @@ What some tags mean here:
 - Culture: cultural commentary.
 - Projects: things people built (apps, tools, side projects).
 - History: how things came to be, histories of objects, places and technology.
+- Design: visual and interaction design craft only; a product or strategy piece that mentions design isn't Design.
+- Philosophy: only when the piece is centrally about philosophy.
+- Communication: only when the piece is centrally about communication.
 
 Examples (title → tags):
 - The Art of Vibe Design → Design
@@ -55,8 +62,23 @@ Examples (title → tags):
 - How AI Agents & Claude Skills Work → AI
 - Paradigm Shifts and the Winner's Curse – Stratechery → Tech
 - Seven Phrases I Stole From Staff Engineers → Career
-- The Most Important Question of Your Life → Self-Improvement, Mindfulness
+- A Timeless New Year → Self-Improvement, Mindfulness
 - The Growth Maze vs The Idea Maze → Growth
+- The Startup Drake Equation → Startups
+- Lessons From My First Exit → Startups
+- Scarcity During Experimentation, Abundance During Scaling → Startups
+- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth
+- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth
+- Mistaking Outputs for Inputs → Thinking
+- Why Books Don't Work → Mental Models, Thinking
+- Building Without Predicting → Self-Improvement, Mental Models
+- Product Innovation Is Discovery Not Creation → Product
+- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product
+- Managing Up → Career
+- Why Are Big Tech Companies So Slow? → Career, Product
+- The Definitive Guide to Mastering Product Sense Interviews → Career, Product
+- How to Calm the Anxious Brain → Self-Improvement, Mindfulness
+- The Paradox of "Finding Yourself" → Self-Improvement, Mindfulness
 
 Allowed tags: `;
 

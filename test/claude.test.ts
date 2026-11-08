@@ -2,7 +2,7 @@
 import { env } from "cloudflare:workers";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ClaudeInput, cleanTitleAndTags, systemPrompt, userMessage } from "../src/claude";
+import { type ClaudeInput, cleanTitleAndTags, outputSchema, systemPrompt, userMessage } from "../src/claude";
 import fixturesText from "./fixtures/claude.json?raw";
 import { network } from "./network";
 
@@ -77,6 +77,32 @@ function section(prompt: string, from: string, to: string): string[] {
   return prompt.slice(start, end).trim().split("\n");
 }
 
+// The SAT-40 scoring set (`.context/eval/eval.jsonl`, gitignored). Empty when it isn't there.
+const evalFiles = import.meta.glob<string>("/.context/eval/eval.jsonl", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+function evalTitles(): string[] {
+  return Object.values(evalFiles).flatMap((text) =>
+    text
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => (JSON.parse(l) as { title: string }).title),
+  );
+}
+
+// A title without its notification count and site suffix, lowercased, plain quotes.
+function titleCore(title: string): string {
+  return title
+    .replace(/^\(\d+\)\s*/, "")
+    .split(/ \| | – | — | · | - /)[0]!
+    .replace(/[’ʼ]/g, "'")
+    .replace(/[“”]/g, '"')
+    .trim()
+    .toLowerCase();
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -131,13 +157,17 @@ describe("request shape", () => {
       messages: [{ role: "user", content: first.message }],
     });
 
-    const raw = JSON.stringify(req.body);
-    expect(raw).not.toContain("maxItems");
-    expect(raw).not.toContain("temperature");
-    expect(raw).not.toContain("top_p");
-    expect(raw).not.toContain("top_k");
-    expect(raw).not.toContain("thinking");
-    expect(raw).not.toContain("fallbacks");
+    // Structural, not a word scan: the system prompt's own text (e.g. "thinking about products")
+    // must not be able to trip these.
+    for (const key of ["thinking", "temperature", "top_p", "top_k", "fallbacks"]) {
+      expect(req.body).not.toHaveProperty(key);
+    }
+    expect(Object.keys(req.body).sort()).toEqual(["max_tokens", "messages", "model", "output_config", "system"]);
+    expect(req.body.output_config).toEqual({
+      effort: "low",
+      format: { type: "json_schema", schema: outputSchema(TAGS) },
+    });
+    expect(JSON.stringify(req.body.output_config)).not.toContain("maxItems");
   });
 
   it("system prompt asks for Title Case and lists the allowed tags", () => {
@@ -166,12 +196,12 @@ describe("request shape", () => {
     expect(prompt).not.toContain("Pick 1 to 3 tags");
   });
 
-  it("system prompt gives a one-line meaning for exactly these eleven tags (Cool retired, Projects and History added)", () => {
+  it("system prompt gives a one-line meaning for exactly these fourteen tags (SAT-40: Product and Career sharpened; Design, Philosophy, Communication gated)", () => {
     expect(section(systemPrompt(TAGS), "What some tags mean here:", "Examples (title → tags):")).toEqual([
       "What some tags mean here:",
       "- Tech: the business and strategy of the tech industry, not anything technical.",
-      "- Product: product management and building products.",
-      "- Career: doing well at work, the craft of your job, teams, interviewing.",
+      "- Product: the most common tag here: building, shipping and thinking about products, and the work of the people who make them (PMs, founders, designers on product teams).",
+      "- Career: doing well at work: craft, growth in a role, teams, hiring, interviewing; often paired with Product.",
       "- Self-Improvement: life advice and personal habits.",
       "- Mindfulness: meaning and inner life.",
       "- Thinking: essays about ideas and how to think.",
@@ -180,23 +210,49 @@ describe("request shape", () => {
       "- Culture: cultural commentary.",
       "- Projects: things people built (apps, tools, side projects).",
       "- History: how things came to be, histories of objects, places and technology.",
+      "- Design: visual and interaction design craft only; a product or strategy piece that mentions design isn't Design.",
+      "- Philosophy: only when the piece is centrally about philosophy.",
+      "- Communication: only when the piece is centrally about communication.",
     ]);
   });
 
-  it("system prompt holds exactly the seven examples and none of the four held-out titles", () => {
-    const prompt = systemPrompt(TAGS);
-    expect(section(prompt, "Examples (title → tags):", "Allowed tags: ")).toEqual([
+  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40)", () => {
+    expect(section(systemPrompt(TAGS), "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
       "- Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
       "- How AI Agents & Claude Skills Work → AI",
       "- Paradigm Shifts and the Winner's Curse – Stratechery → Tech",
       "- Seven Phrases I Stole From Staff Engineers → Career",
-      "- The Most Important Question of Your Life → Self-Improvement, Mindfulness",
+      "- A Timeless New Year → Self-Improvement, Mindfulness",
       "- The Growth Maze vs The Idea Maze → Growth",
+      "- The Startup Drake Equation → Startups",
+      "- Lessons From My First Exit → Startups",
+      "- Scarcity During Experimentation, Abundance During Scaling → Startups",
+      "- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth",
+      "- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth",
+      "- Mistaking Outputs for Inputs → Thinking",
+      "- Why Books Don't Work → Mental Models, Thinking",
+      "- Building Without Predicting → Self-Improvement, Mental Models",
+      "- Product Innovation Is Discovery Not Creation → Product",
+      "- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product",
+      "- Managing Up → Career",
+      "- Why Are Big Tech Companies So Slow? → Career, Product",
+      "- The Definitive Guide to Mastering Product Sense Interviews → Career, Product",
+      "- How to Calm the Anxious Brain → Self-Improvement, Mindfulness",
+      "- The Paradox of \"Finding Yourself\" → Self-Improvement, Mindfulness",
     ]);
+  });
+
+  it("system prompt carries none of the held-out titles (SAT-38) and none of the 40 scoring titles (SAT-40)", () => {
+    const prompt = systemPrompt(TAGS);
+    const lower = prompt.toLowerCase();
     // Held out for the lead's live re-check (SAT-38): the prompt must not carry their answers.
     for (const heldOut of [
+      "What Is Good Retention",
+      "Ideas Aren't Getting Harder to Find",
+      "Aaron Levie",
+      "Five More Leadership Lessons",
       "Levie",
       "last mile",
       "Retention",
@@ -205,7 +261,12 @@ describe("request shape", () => {
       "Asterisk",
       "Leadership Lessons",
     ]) {
-      expect(prompt).not.toContain(heldOut);
+      expect(lower).not.toContain(heldOut.toLowerCase());
+    }
+    // The scoring set is personal and gitignored, so it's checked only where it exists.
+    for (const title of evalTitles()) {
+      expect(lower, title).not.toContain(title.toLowerCase());
+      expect(lower, title).not.toContain(titleCore(title));
     }
   });
 
