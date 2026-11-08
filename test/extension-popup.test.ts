@@ -134,8 +134,13 @@ class FakeElement {
     for (const fn of this.listeners.get("click") ?? []) fn(makeEvent("click", this));
   }
   focus() {
-    if (this.disabled || !this.rendered) return;
+    if (this.disabled || !this.rendered || this.doc.activeElement === this) return;
     this.doc.activeElement = this;
+    for (const fn of this.listeners.get("focus") ?? []) fn(makeEvent("focus", this));
+  }
+  hover() {
+    if (!this.rendered) return;
+    for (const fn of this.listeners.get("pointerenter") ?? []) fn(makeEvent("pointerenter", this));
   }
   find(id: string): FakeElement | null {
     if (this.id === id) return this;
@@ -348,14 +353,60 @@ describe("at rest", () => {
     expect(sent).toEqual([]);
   });
 
-  it("holds a popup port while open and reconnects it when it drops", async () => {
+  it("holds a popup port while open and reconnects it 250 ms after it drops", async () => {
     await open();
     expect(ports.map((p) => [p.name, p.disconnected])).toEqual([["popup", false]]);
     ports[0]!.drop(); // an idle worker shut down
+    await wait(249);
+    expect(ports).toHaveLength(1);
+    await wait(1);
     expect(ports.map((p) => [p.name, p.disconnected])).toEqual([
       ["popup", true],
       ["popup", false],
     ]);
+  });
+
+  it("backs off to 1 s between reconnects when the port keeps dropping, so a broken worker can't spin", async () => {
+    await open();
+    const connectedAt: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const before = ports.length;
+      ports[ports.length - 1]!.drop(); // drops as soon as it connects
+      const dropped = Date.now();
+      while (ports.length === before) await wait(1);
+      connectedAt.push(Date.now() - dropped);
+    }
+    expect(connectedAt).toEqual([250, 1000, 1000, 1000]);
+  });
+
+  it("goes back to the short delay after a port has held for a while", async () => {
+    await open();
+    ports[0]!.drop();
+    await wait(250);
+    ports[1]!.drop();
+    await wait(1000);
+    expect(ports).toHaveLength(3);
+    await wait(30_000); // this one lived (the worker idled out normally)
+    ports[2]!.drop();
+    await wait(250);
+    expect(ports).toHaveLength(4);
+  });
+
+  it("a connect that throws is retried with the same backoff", async () => {
+    await open();
+    const runtime = (globalThis as any).chrome.runtime;
+    const realConnect = runtime.connect;
+    let attempts = 0;
+    runtime.connect = () => {
+      attempts += 1;
+      throw new Error("Extension context invalidated.");
+    };
+    ports[0]!.drop();
+    await wait(250 + 1000 + 1000);
+    expect(attempts).toBe(3);
+    runtime.connect = realConnect;
+    await wait(1000);
+    expect(ports.map((p) => p.disconnected)).toEqual([true, false]);
   });
 
   it("lets go of the port on close and doesn't reconnect", async () => {
@@ -364,6 +415,7 @@ describe("at rest", () => {
     expect(closedAt).not.toBeNull();
     expect(ports.map((p) => p.disconnected)).toEqual([true]);
     ports[0]!.drop();
+    await wait(5000);
     expect(ports).toHaveLength(1);
   });
 
@@ -372,6 +424,26 @@ describe("at rest", () => {
     await press("Escape");
     expect(elapsed()).toBe(0);
     expect(sent).toEqual([]);
+  });
+
+  for (const [name, tab] of [
+    ["Chrome's untitled-page title (the URL without its scheme)", { url: "https://notes.example.com/drafts/q3-plan", title: "notes.example.com/drafts/q3-plan" }],
+    ["a title that is the whole URL", { url: "https://example.com/report.pdf", title: "https://example.com/report.pdf" }],
+    ["an image tab's name.ext (W×H)", { url: "https://i.example.com/a1b2c3.png", title: "a1b2c3.png (1200×800)" }],
+  ] as const) {
+    it(`doesn't send ${name} as the title, but still shows it`, async () => {
+      await open({ tab });
+      expect($("title").textContent).toBe(tab.title);
+      await press("l");
+      expect(messages()).toEqual([{ type: "save", url: tab.url, status: "later" }]);
+    });
+  }
+
+  it("sends a real title that happens to mention the domain", async () => {
+    const tab = { url: "https://example.com/", title: "example.com: Example Domain" };
+    await open({ tab });
+    await press("l");
+    expect(messages()).toEqual([{ type: "save", url: tab.url, title: tab.title, status: "later" }]);
   });
 
   it("leaves the title out of the message when the tab has none, and shows the URL", async () => {
@@ -696,6 +768,91 @@ describe("double presses send once", () => {
 });
 
 // ---------- keyboard model ----------
+
+// The rows that look selected: the wash comes from .is-current, or :focus-visible on the
+// focused row. Counting both is the strict reading.
+const washed = () =>
+  ["later", "read", "favorite"]
+    .map((s) => $(`row-${s}`))
+    .filter((r) => r.rendered && (r.hasClass("is-current") || doc.activeElement === r))
+    .map((r) => r.id);
+
+describe("one row looks selected", () => {
+  it("at rest it's L", async () => {
+    await open();
+    expect(washed()).toEqual(["row-later"]);
+  });
+
+  it("after a failed L, ArrowDown leaves exactly one row washed (R)", async () => {
+    await open();
+    await press("l");
+    await reply(0, { ok: false, error: "notion_rate_limited" });
+    expect(washed()).toEqual(["row-later"]);
+    await press("ArrowDown");
+    expect(washed()).toEqual(["row-read"]);
+    await press("Enter");
+    expect(statuses()).toEqual(["later", "read"]);
+  });
+
+  it("hovering a row moves the selection to it, so Enter activates the row that looks selected", async () => {
+    await open();
+    $("row-read").hover();
+    expect(washed()).toEqual(["row-read"]);
+    expect(doc.activeElement).toBe($("row-read"));
+    await press("Enter");
+    expect(statuses()).toEqual(["read"]);
+  });
+
+  it("after R it's the Favorite row only", async () => {
+    await open();
+    await press("r");
+    expect(washed()).toEqual(["row-favorite"]);
+  });
+
+  it("hovering a disabled row doesn't take the selection", async () => {
+    await open();
+    await press("r");
+    $("row-later").hover();
+    expect(washed()).toEqual(["row-favorite"]);
+  });
+
+  it("when saved it's the stamped row only", async () => {
+    await open();
+    $("row-read").hover();
+    await press("l");
+    await reply(0, { ok: true, id: "page-1" });
+    expect(washed()).toEqual(["row-later"]);
+  });
+});
+
+describe("held keys", () => {
+  it("holding R sends one read and doesn't end the Favorite window", async () => {
+    await open();
+    await press("r");
+    for (let i = 0; i < 10; i++) await press("r", { repeat: true });
+    expect(statuses()).toEqual(["read"]);
+    expect(isShown("row-favorite")).toBe(true);
+    expect($("popup").getAttribute("data-state")).toBe("window");
+    await press("f");
+    expect(statuses()).toEqual(["read", "favorite"]);
+  });
+
+  it("holding Enter on the focused Favorite row never favorites", async () => {
+    await open();
+    await press("r");
+    await reply(0, { ok: true, id: "page-1" });
+    await press("Enter");
+    await press("Enter", { repeat: true });
+    expect(statuses()).toEqual(["read"]);
+  });
+
+  it("holding L sends one later", async () => {
+    await open();
+    await press("l");
+    await press("l", { repeat: true });
+    expect(statuses()).toEqual(["later"]);
+  });
+});
 
 describe("keys", () => {
   it("? does nothing: no key sheet, nothing sent, nothing closed", async () => {

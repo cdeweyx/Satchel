@@ -121,7 +121,7 @@ body {
   flex-shrink: 0;
 }
 
-.row:hover:not(:disabled),
+/* The selection. Hover has no cue of its own: it moves focus, so it moves this. */
 .row:focus-visible,
 .row.is-current {
   background: var(--row-wash);

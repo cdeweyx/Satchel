@@ -14,6 +14,8 @@ const LABELS = { later: "Send to inbox", read: "Mark as archived", favorite: "Fa
 const ERROR_LABEL = "Couldn't save, try again";
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn", "OS"]);
 const STATUSES = ["later", "read", "favorite"];
+const RECONNECT_MS = [250, 1000]; // then 1 s each time, so a broken worker can't spin a loop
+const PORT_SETTLED_MS = 5000; // a port that lived this long resets the backoff
 
 const $ = (id) => document.getElementById(id);
 const rowOf = (status) => $(`row-${status}`);
@@ -22,10 +24,19 @@ const rowOf = (status) => $(`row-${status}`);
 let state = "loading";
 let page = { url: "", title: "" };
 let port = null;
+let portOpenedAt = 0;
+let reconnects = 0;
+let reconnectTimer = null;
 let closing = false;
 let windowTimer = null;
 let readReply = null; // the read save's reply (a promise) once R is pressed
 let errorOn = null; // the status whose save failed, while state is "error"
+
+// One row looks selected at a time: the focused one, or (while every row is disabled)
+// the row the state points at. Focus moving to a row moves the selection with it.
+function select(row) {
+  for (const s of STATUSES) rowOf(s).classList.toggle("is-current", rowOf(s) === row);
+}
 
 function setState(next) {
   state = next;
@@ -35,19 +46,30 @@ function setState(next) {
 // ---- talking to the service worker ----
 
 function connectPort() {
+  reconnectTimer = null;
   if (closing) return;
   try {
     port = chrome.runtime.connect({ name: POPUP_PORT });
   } catch {
     port = null;
+    scheduleReconnect();
     return;
   }
+  portOpenedAt = Date.now();
   port.onDisconnect.addListener(() => {
     void chrome.runtime.lastError; // read it so Chrome doesn't log it as unchecked
     port = null;
+    if (Date.now() - portOpenedAt >= PORT_SETTLED_MS) reconnects = 0;
     // An idle worker can be shut down, which drops the port. Hold a new one while open.
-    if (!closing) connectPort();
+    scheduleReconnect();
   });
+}
+
+function scheduleReconnect() {
+  if (closing || reconnectTimer) return;
+  const delay = RECONNECT_MS[Math.min(reconnects, RECONNECT_MS.length - 1)];
+  reconnects += 1;
+  reconnectTimer = setTimeout(connectPort, delay);
 }
 
 // Always resolves, to {ok: true, id} or {ok: false, error}.
@@ -115,7 +137,8 @@ function openWindow() {
   const fav = rowOf("favorite");
   fav.hidden = false;
   fav.disabled = false;
-  fav.classList.add("is-current");
+  fav.focus(); // Enter here still ends the window (onKey), it doesn't favorite
+  select(fav);
   windowTimer = setTimeout(endWindow, FAVORITE_WINDOW_MS);
 }
 
@@ -134,7 +157,7 @@ async function pressFavorite() {
   clearTimeout(windowTimer);
   begin("favorite");
   rowOf("favorite").hidden = false;
-  rowOf("favorite").classList.add("is-current");
+  select(rowOf("favorite"));
   setState("pending");
   // Sent now; the service worker runs it after the read for the same URL. SAVED waits
   // for both replies, and follows the favorite's: if it landed, the page is saved.
@@ -159,7 +182,8 @@ function hideFavorite() {
 function saved(status) {
   setState("saved");
   const row = rowOf(status);
-  row.classList.add("is-active", "is-current", "is-saved");
+  row.classList.add("is-active", "is-saved");
+  select(row);
   $(`stamp-${status}`).hidden = false;
   $("status").textContent = "Saved";
   if (reducedMotion()) closePopup();
@@ -173,7 +197,8 @@ function failed(status, error) {
   for (const s of ["later", "read"]) rowOf(s).disabled = false;
   const row = rowOf(status);
   row.classList.remove("is-active");
-  row.classList.add("is-error", "is-current");
+  row.classList.add("is-error");
+  select(row);
   row.disabled = false;
   $(`label-${status}`).textContent = ERROR_LABEL;
   $(`detail-${status}`).textContent = error;
@@ -186,6 +211,7 @@ function closePopup() {
   if (closing) return;
   closing = true;
   clearTimeout(windowTimer);
+  clearTimeout(reconnectTimer);
   setState("closed");
   try {
     port?.disconnect();
@@ -224,6 +250,11 @@ function moveFocus(step) {
 }
 
 function onKey(event) {
+  // A held key repeats; only the first press counts (holding R mustn't end the window).
+  if (event.repeat) {
+    event.preventDefault();
+    return;
+  }
   if (event.metaKey || event.ctrlKey || event.altKey || MODIFIER_KEYS.has(event.key)) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
 
@@ -278,12 +309,38 @@ function domainOf(url) {
   }
 }
 
+// Chrome names an untitled tab after its URL (with or without the scheme) and an image
+// tab "name.ext (W×H)". Those aren't titles, so the Worker gets none and finds its own.
+function clientTitle(title, url) {
+  const t = title.trim();
+  if (!t) return "";
+  const bare = url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const fallbacks = [url, bare, bare.replace(/\/$/, ""), decodeSafe(bare), decodeSafe(bare).replace(/\/$/, "")];
+  if (fallbacks.includes(t)) return "";
+  if (/^[^/\\]+\.[a-z0-9]{2,5} \(\d+\s*[×x]\s*\d+\)$/i.test(t)) return "";
+  return t;
+}
+
+function decodeSafe(s) {
+  try {
+    return decodeURI(s);
+  } catch {
+    return s;
+  }
+}
+
 async function init() {
   connectPort();
   document.addEventListener("keydown", onKey);
   rowOf("later").addEventListener("click", () => pressLater());
   rowOf("read").addEventListener("click", () => pressRead());
   rowOf("favorite").addEventListener("click", () => pressFavorite());
+  for (const s of STATUSES) {
+    const row = rowOf(s);
+    row.addEventListener("focus", () => select(row));
+    // Hover moves focus, so the row that looks selected is the one Enter activates.
+    row.addEventListener("pointerenter", () => row.focus());
+  }
   $("setup-link").addEventListener("click", (event) => {
     event.preventDefault();
     openSetup();
@@ -295,9 +352,10 @@ async function init() {
   ]);
   if (closing) return;
   const tab = (tabs && tabs[0]) || {};
-  page = { url: tab.url || "", title: tab.title || "" };
-  $("domain").textContent = domainOf(page.url);
-  $("title").textContent = page.title || page.url;
+  const url = tab.url || "";
+  page = { url, title: clientTitle(tab.title || "", url) };
+  $("domain").textContent = domainOf(url);
+  $("title").textContent = tab.title || url;
 
   if (!settings || !settings.workerUrl || !settings.key) {
     setState("setup");
