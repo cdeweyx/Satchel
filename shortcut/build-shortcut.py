@@ -138,7 +138,8 @@ U_URL, U_KEY, U_BASE = uid("text.worker-url"), uid("text.key"), uid("replace.bas
 U_MENU, U_NAME, U_POST = uid("menu.status"), uid("getitemname"), uid("downloadurl")
 U_OK, U_IF_OK, U_ERR, U_IF_ERR = uid("value.ok"), uid("if.ok"), uid("value.error"), uid("if.error")
 
-MENU = [("Later", "later"), ("Read", "read"), ("★ Favorite", "favorite")]
+# Labels match the Chrome popup (extension/popup.js LABELS); the status values sent to the Worker don't change.
+MENU = [("Send to inbox", "later"), ("Mark as archived", "read"), ("Favorite", "favorite")]
 
 
 def actions():

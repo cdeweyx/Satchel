@@ -93,7 +93,7 @@ curl -s -X POST https://<your worker>/save \
 The body is `{ "url", "title"?, "status" }`. `title` is optional, and `status` is `later`, `read` or `favorite`.
 
 - **Chrome extension:** coming soon, with Later / Read / ★ buttons in a toolbar popup.
-- **iOS Shortcut:** coming soon, to save from the iPhone share sheet.
+- **iOS Shortcut:** save from the iPhone share sheet. Build and sign it on a Mac with `npm run shortcut`, then follow [the install steps](shortcut/README.md#install-on-your-iphone).
 
 ## Configure
 
