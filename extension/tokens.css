@@ -45,6 +45,7 @@
   --satchel-accent: #2F4DA0; /* stamp blue: the stamp and Saved only */
   --satchel-favorite: #B5883A; /* brass: the star, once set */
   --satchel-danger: #1E1A16; /* errors are ink, never red */
+  --satchel-paper: #FFFFFF; /* the keycap's lift, light mode only; dark never reads it */
   --satchel-radius: 6px;
   --satchel-font: "Hanken Grotesk", system-ui, sans-serif;
   --satchel-font-display: "Besley", Georgia, serif;

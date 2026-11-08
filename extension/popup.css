@@ -26,7 +26,7 @@ body {
 
 .popup {
   /* Final's keycap fill and esc letter sit between the tokens; mixed, not new hexes. */
-  --cap-fill: color-mix(in srgb, var(--satchel-bg) 37%, white);
+  --cap-fill: color-mix(in srgb, var(--satchel-bg) 37%, var(--satchel-paper));
   --esc-ink: color-mix(in srgb, var(--satchel-fg) 44%, var(--satchel-muted));
   --esc-fill: transparent;
   --row-wash: color-mix(in srgb, var(--satchel-fg) 5%, transparent);

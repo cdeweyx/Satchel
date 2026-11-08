@@ -15,6 +15,7 @@ Source of truth: the [Final page](https://app.paper.design/file/01M6WXXRTZF9VAQA
 | Stamp blue | `--satchel-accent` | `#2F4DA0` | `#8AA2E6` | The mark, a pressed keycap, the SAVED impression. Nothing else. |
 | Brass | `--satchel-favorite` | `#B5883A` | `#B5883A` | The star, once it's set |
 | Error | `--satchel-danger` | `#1E1A16` | `#EDE7DD` | Error text. It's the ink, never red. |
+| Paper | `--satchel-paper` | `#FFFFFF` | (unused) | The keycap's lift, light mode only |
 
 Contrast against the ground (WCAG 2.2):
 

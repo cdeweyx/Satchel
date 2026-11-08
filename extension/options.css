@@ -7,7 +7,7 @@
   --options-tiny: calc(var(--satchel-font-size) * 5 / 7); /* 10, the wide cap */
   --options-mono: calc(var(--satchel-font-size) * 13 / 14); /* 13, typed values */
   --options-hover: color-mix(in srgb, var(--satchel-fg) 5%, transparent);
-  --options-cap: color-mix(in srgb, var(--satchel-bg), white 60%);
+  --options-cap: color-mix(in srgb, var(--satchel-bg), var(--satchel-paper) 60%);
 }
 
 @media (prefers-color-scheme: dark) {
