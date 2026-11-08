@@ -1802,6 +1802,33 @@ describe("SAT-45: an X Article keeps its own title", () => {
     expect(logs().find((l) => l.event === "enrich")).toMatchObject({ source: "x-oembed", claude: true, tags: 2 });
   });
 
+  it("lead ruling: og:description a different summary sentence; Claude still gets og:title's quote as the title", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, OEMBED_BODY);
+    htmlPage(
+      A.storedUrl,
+      record,
+      ogPage(A.page.ogTitle, "Every job has a last mile that AI agents can&#39;t yet reach, and it never ends…"),
+    );
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "The Never-Ending Last Mile of Work", tags: ["AI"] }));
+    mockNotion(record, { name: "@levie on X", url: A.storedUrl, tags: [] });
+
+    await runInWaitUntil(xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" }));
+
+    expect((seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody).messages).toEqual([
+      { role: "user", content: TITLED },
+    ]);
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        ...nameProp("The Never-Ending Last Mile of Work"),
+        [PROPS.url]: { url: A.canonicalUrl },
+        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] },
+      },
+    });
+  });
+
   it("criterion 1 with a client title (Chrome's tab title): still the titled shape with the article title", async () => {
     captureLogs();
     const clientTitle = 'Aaron Levie on X: "The never-ending last mile of work" / X';

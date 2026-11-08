@@ -238,16 +238,17 @@ async function viaTwitterbot(id: string, signal: AbortSignal): Promise<Attempt> 
 
 /**
  * SAT-43: the post text x.com's page gives a post whose oEmbed text is only links (an X
- * Article). og:description with a trailing "…" stripped, or the quoted part of og:title when
- * og:description is a cut of it. Null when the page describes no post: og:title isn't a
- * post's, or og:description is empty, only links, or X's generic text.
+ * Article). The quoted part of og:title when there is one (SAT-45: that's the article's title,
+ * whatever og:description says), else og:description with a trailing "…" stripped. Null when
+ * the page describes no post: og:title isn't a post's, or og:description is empty or X's
+ * generic text, or the text is only links.
  */
 export function pageText(ogTitle: string, ogDescription: string): string | null {
   const quoted = OG_TITLE_QUOTED.exec(ogTitle)?.[1]?.replace(/\s+/g, " ").trim() ?? "";
   if (!quoted && !OG_TITLE.test(ogTitle)) return null;
   const description = ogDescription.replace(/\s+/g, " ").replace(/\s*…$/, "").trim();
   if (!description || GENERIC_DESCRIPTION.test(description)) return null;
-  const text = quoted && quoted.startsWith(description) ? quoted : description;
+  const text = quoted || description;
   return isOnlyLinks(text) ? null : text;
 }
 

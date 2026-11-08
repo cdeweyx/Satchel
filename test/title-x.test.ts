@@ -525,10 +525,12 @@ describe("SAT-43: pageText", () => {
     expect(pageText(title, "The never-ending last…")).toBe("The never-ending last mile of work");
   });
 
-  it("uses og:description, ellipsis stripped, when it isn't a cut of the quoted title", () => {
-    expect(pageText('Aaron Levie on X: "Short" / X', "A longer summary of the article…")).toBe(
-      "A longer summary of the article",
-    );
+  // SAT-45 changed this SAT-43 test: a quoted og:title now wins over a different og:description.
+  it("SAT-45: the quoted og:title wins even when og:description is a different summary", () => {
+    expect(pageText('Aaron Levie on X: "Short" / X', "A longer summary of the article…")).toBe("Short");
+  });
+
+  it("uses og:description, ellipsis stripped, when og:title has no quoted part", () => {
     expect(pageText("Aaron Levie (@levie) on X", "The never-ending last mile of work…")).toBe(
       "The never-ending last mile of work",
     );
