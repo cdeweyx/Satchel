@@ -37,8 +37,8 @@ export type Deps = {
   log: (line: string) => void;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
-  // Gap between Notion request starts. 334 ms keeps it at 3 a second.
-  minIntervalMs: number;
+  // Gap between Notion request starts. Defaults to NOTION_MIN_INTERVAL_MS; tests pass 0.
+  minIntervalMs?: number;
 };
 
 export type PlanEntry = {
@@ -89,6 +89,8 @@ const EXAMPLES = 20;
 const URL_EXAMPLES = 5;
 const MAX_TAGS = 3;
 const MAX_429_WAITS = 10;
+// 334 ms between Notion request starts keeps it at 3 a second.
+const NOTION_MIN_INTERVAL_MS = 334;
 const NOTION_API = "https://api.notion.com/v1";
 
 // src/ is loaded lazily so the CLI can register its .ts resolve hook first (see the bottom).
@@ -110,12 +112,15 @@ function notionClient(deps: Deps, version: string) {
   const { NOTION_TOKEN: token, NOTION_DATA_SOURCE_ID: dataSourceId } = deps.env;
   if (!token) throw new Error("NOTION_TOKEN is not set");
   if (!dataSourceId) throw new Error("NOTION_DATA_SOURCE_ID is not set");
+  const interval = deps.minIntervalMs ?? NOTION_MIN_INTERVAL_MS;
   let lastStart = Number.NEGATIVE_INFINITY;
 
   async function call<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<T> {
     for (let waits = 0; ; waits++) {
-      const gap = lastStart + deps.minIntervalMs - deps.now();
-      if (gap > 0) await deps.sleep(gap);
+      // A loop, not one sleep: a timer can fire a millisecond early by the clock.
+      for (let gap = lastStart + interval - deps.now(); gap > 0; gap = lastStart + interval - deps.now()) {
+        await deps.sleep(gap);
+      }
       lastStart = deps.now();
       const res = await fetch(`${NOTION_API}${path}`, {
         method,
@@ -338,6 +343,18 @@ async function withUsageMeter<T>(run: (usage: { input: number; output: number })
 }
 
 export async function dryRun(deps: Deps, out: string, mode: TagsMode): Promise<void> {
+  // A Notion error stops the run (Claude failures don't: the row keeps its old title). The
+  // CLI entry prints the error and exits 1; this says what the stop left behind.
+  let done = false;
+  try {
+    await planRows(deps, out, mode);
+    done = true;
+  } finally {
+    if (!done) deps.log("Dry run stopped: nothing written to Notion, no plan written");
+  }
+}
+
+async function planRows(deps: Deps, out: string, mode: TagsMode): Promise<void> {
   const started = deps.now();
   const l = await lib();
   const { ANTHROPIC_API_KEY: apiKey } = deps.env;
@@ -566,39 +583,47 @@ export async function apply(deps: Deps, planPath: string, out: string): Promise<
   let written = 0;
   let already = 0;
   let skipped = 0;
-  for (const { entry: e, props, fields } of writes) {
-    if (fields.length === 0) continue;
-    // Re-read right before writing. A row that already holds the plan's new values (a resumed
-    // run) is reported as already applied; one the user edited (or trashed) since the dry run
-    // is skipped. Otherwise the rollback entry holds what's in Notion now, not the plan's copy.
-    const current = rowFromPage(l, await n.retrievePage(e.pageId));
-    if (current !== null && holds(current, e.newTitle, e.newTags, e.newUrl)) {
-      deps.log(`  ${e.pageId} already applied`);
-      already++;
-      continue;
+  // The summary prints even when a Notion error stops the run, so the count of rows written
+  // before the stop is on screen. The CLI entry then prints the error and exits 1.
+  let done = false;
+  try {
+    for (const { entry: e, props, fields } of writes) {
+      if (fields.length === 0) continue;
+      // Re-read right before writing. A row that already holds the plan's new values (a resumed
+      // run) is reported as already applied; one the user edited (or trashed) since the dry run
+      // is skipped. Otherwise the rollback entry holds what's in Notion now, not the plan's copy.
+      const current = rowFromPage(l, await n.retrievePage(e.pageId));
+      if (current !== null && holds(current, e.newTitle, e.newTags, e.newUrl)) {
+        deps.log(`  ${e.pageId} already applied`);
+        already++;
+        continue;
+      }
+      if (current === null || !holds(current, e.oldTitle, e.oldTags, e.oldUrl)) {
+        deps.log(`  ${e.pageId} skipped: changed since dry run`);
+        skipped++;
+        continue;
+      }
+      const rollback: RollbackEntry = {
+        pageId: e.pageId,
+        fields,
+        title: current.title,
+        titleRich: current.titleRich,
+        tags: current.tags,
+        url: current.url,
+        written: { title: e.newTitle, tags: e.newTags, url: e.newUrl },
+      };
+      appendFileSync(logPath, JSON.stringify(rollback) + "\n");
+      await n.patchPage(e.pageId, props);
+      written++;
     }
-    if (current === null || !holds(current, e.oldTitle, e.oldTags, e.oldUrl)) {
-      deps.log(`  ${e.pageId} skipped: changed since dry run`);
-      skipped++;
-      continue;
-    }
-    const rollback: RollbackEntry = {
-      pageId: e.pageId,
-      fields,
-      title: current.title,
-      titleRich: current.titleRich,
-      tags: current.tags,
-      url: current.url,
-      written: { title: e.newTitle, tags: e.newTags, url: e.newUrl },
-    };
-    appendFileSync(logPath, JSON.stringify(rollback) + "\n");
-    await n.patchPage(e.pageId, props);
-    written++;
+    done = true;
+  } finally {
+    if (!done) deps.log("Apply stopped before the end of the plan");
+    deps.log(`Rows written: ${written} of ${plan.length} in the plan`);
+    deps.log(`Already applied: ${already}`);
+    deps.log(`Skipped (changed since dry run): ${skipped}`);
+    deps.log(`Old values logged to ${logPath}`);
   }
-  deps.log(`Rows written: ${written} of ${plan.length} in the plan`);
-  deps.log(`Already applied: ${already}`);
-  deps.log(`Skipped (changed since dry run): ${skipped}`);
-  deps.log(`Old values logged to ${logPath}`);
 }
 
 function holds(row: Row, title: string, tags: string[], url: string | null): boolean {
@@ -648,26 +673,32 @@ export async function rollback(deps: Deps, logPath: string): Promise<void> {
   // the apply, or trashed the row), the row is skipped so the edit survives.
   let restored = 0;
   let skipped = 0;
-  for (const { entry: e, props } of writes.reverse()) {
-    if (Object.keys(props).length === 0) continue;
-    const current = rowFromPage(l, await n.retrievePage(e.pageId));
-    const w = e.written;
-    const intact =
-      current !== null &&
-      w !== undefined &&
-      (!e.fields.includes("title") || current.title === w.title) &&
-      (!e.fields.includes("tags") || sameTagSet(current.tags, w.tags)) &&
-      (!e.fields.includes("url") || current.url === w.url);
-    if (!intact) {
-      deps.log(`  warning: ${e.pageId} skipped: changed since apply`);
-      skipped++;
-      continue;
+  let done = false;
+  try {
+    for (const { entry: e, props } of writes.reverse()) {
+      if (Object.keys(props).length === 0) continue;
+      const current = rowFromPage(l, await n.retrievePage(e.pageId));
+      const w = e.written;
+      const intact =
+        current !== null &&
+        w !== undefined &&
+        (!e.fields.includes("title") || current.title === w.title) &&
+        (!e.fields.includes("tags") || sameTagSet(current.tags, w.tags)) &&
+        (!e.fields.includes("url") || current.url === w.url);
+      if (!intact) {
+        deps.log(`  warning: ${e.pageId} skipped: changed since apply`);
+        skipped++;
+        continue;
+      }
+      await n.patchPage(e.pageId, props);
+      restored++;
     }
-    await n.patchPage(e.pageId, props);
-    restored++;
+    done = true;
+  } finally {
+    if (!done) deps.log("Rollback stopped before the end of the log");
+    deps.log(`Rows restored: ${restored}`);
+    deps.log(`Skipped (changed since apply): ${skipped}`);
   }
-  deps.log(`Rows restored: ${restored}`);
-  deps.log(`Skipped (changed since apply): ${skipped}`);
 }
 
 // --- CLI ---
@@ -740,10 +771,10 @@ if ((import.meta as { main?: boolean }).main) {
       log: (line) => console.log(line),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: () => Date.now(),
-      minIntervalMs: 334,
     });
   } catch (err) {
-    console.error(err instanceof Error ? err.message : String(err));
+    // The one place a stop surfaces: the summary above has the counts, this is the error.
+    console.error(`Stopped on an error: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   }
 }
