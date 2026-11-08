@@ -19,7 +19,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
   # Scan only commits the remote doesn't have yet (works for a new branch too).
-  if ! gitleaks git "$root" --config "$root/.gitleaks.toml" --redact --no-banner \
+  if ! gitleaks git "$root" --config "$root/.gitleaks.toml" --redact --no-banner --verbose \
     --log-opts="$local_sha --not --remotes=$remote"; then
     echo "pre-push: gitleaks found a secret in $local_ref; push blocked" >&2
     status=1
