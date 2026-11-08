@@ -60,14 +60,14 @@ Existing views: **Inbox** (Archived = false, newest first) and **Archived**. My 
 
 ## Chrome extension
 
-- Manifest V3. Toolbar button opens a small popup: page title, then **Later / Read / ★**, with keys `L` / `R` / `F`. A keyboard shortcut opens the popup.
-- Options page: Worker URL and save key, stored in `chrome.storage.local` (not `sync`: my two profiles are different Google accounts, so I set it once in each).
+- Manifest V3. Toolbar button opens a small popup: page title, then **Send to inbox / Mark as archived / Favorite**, with keys `L` / `R` / `F`. A keyboard shortcut opens the popup.
+- Options page: Worker URL and Satchel key, stored in `chrome.storage.local` (not `sync`: my two profiles are different Google accounts, so I set it once in each).
 - Shows a quick "Saved ✓" and closes.
 - Install via "Load unpacked" in both profiles. My work company doesn't block extensions.
 
 ## iOS Shortcut
 
-- Four built-in actions: receive URLs / Safari pages from the share sheet → Choose from Menu (Later, Read, ★ Favorite) → Get Contents of URL (POST JSON with the key header) → Show Notification "Saved ✓".
+- Four built-in actions: receive URLs / Safari pages from the share sheet → Choose from Menu (Send to inbox, Mark as archived, Favorite) → Get Contents of URL (POST JSON with the key header) → Show Notification "Saved ✓".
 - Generate the `.shortcut` file in the repo, sign it on my Mac with `shortcuts sign --mode anyone` (the CLI exists here), and I'll AirDrop it to my phone. If signing fails, give me the manual build steps instead.
 - Saving works with the Shortcut alone, no app needed. It should work from Safari, X and Mail.
 - The repo copy is a template with no key in it.

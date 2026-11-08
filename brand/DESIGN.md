@@ -53,6 +53,8 @@ All three are OFL and bundled as latin woff2 in `extension/fonts/` with each fam
 
 On light it's printed flat. On dark saddle the large die is debossed (shadow only, no ink).
 
+The README is the exception: it uses `brand/mark-dark.svg` (the same paths in #8AA2E6) on dark, because an `<img>` can't cast the debossed shadow.
+
 The icon is the same die with just an S. It's built per size so it holds up at 16 px:
 
 - **48 and 128 px**: outer rule 3 px (corner 9), inner rule 1 px at a 6 px inset (corner 5.5), S at 26 px on the 48 px grid. The 128 is the 48 drawn larger.

@@ -122,7 +122,7 @@ body {
 }
 
 /* The selection. Hover has no cue of its own: it moves focus, so it moves this. */
-.row:focus-visible,
+.row:focus-visible:not(:disabled),
 .row.is-current {
   background: var(--row-wash);
 }

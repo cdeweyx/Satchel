@@ -49,5 +49,10 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/gitleaks" gitleaks
           echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
 
+      # Checkout doesn't fetch other PRs' heads, so --all would miss a secret pushed to a
+      # PR branch and then deleted. The repo is public, so this needs no token.
+      - name: Fetch pull request heads
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/origin/pr/*'
+
       - name: Scan full history for secrets
         run: gitleaks git . --config .gitleaks.toml --redact --no-banner --verbose --log-opts="--all"
