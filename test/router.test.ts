@@ -320,7 +320,7 @@ describe("criterion 5: /health is exactly json(result.status, result.body) from 
   });
 
   it("a wrong key isn't special-cased: whatever health() returns is the response", async () => {
-    // The real stub answers 200 {ok:true} for any keyState; SAT-16 makes wrong a 401.
-    await expectJson(await call(request("/health", { key: "nope" })), 200, { ok: true });
+    // The router doesn't 401 a wrong key on /health itself; the real health() (SAT-16) does.
+    await expectJson(await call(request("/health", { key: "nope" })), 401, { ok: false, error: "unauthorized" });
   });
 });
