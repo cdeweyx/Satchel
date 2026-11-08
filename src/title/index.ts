@@ -18,6 +18,9 @@ export type LookupResult = {
   url?: string;
   source: "client" | "x-oembed" | "x-twitterbot" | "media-oembed" | "page" | "fallback";
   article?: true; // SAT-45: an X Article's title, from lookupX (see XTitle)
+  // SAT-48: an absolute https preview image (page og:image or twitter:image, oEmbed
+  // thumbnail_url, an X post's own photo). previewBlock in preview.ts turns it into a block.
+  image?: string;
   bytesRead: number;
 };
 

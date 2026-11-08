@@ -2,8 +2,11 @@
 // `stored` is the canonical URL from canonicalize(). One fetch per call, 4 s each. Apple
 // Podcasts, Overcast, Pocket Casts and Twitch return null here: the page path reads their
 // HTML (round 1 cut the Apple lookup API). Never throws: any failure is null.
+// SAT-48: oEmbed's `thumbnail_url`, when https, is the preview image.
 
-export type MediaTitle = { title: string; source: "media-oembed"; bytesRead: number };
+import { httpsUrl } from "../preview";
+
+export type MediaTitle = { title: string; image?: string; source: "media-oembed"; bytesRead: number };
 
 const FETCH_TIMEOUT_MS = 4000;
 
@@ -71,9 +74,10 @@ export async function lookupMedia(stored: string, signal: AbortSignal): Promise<
         }
         const { text, bytesRead } = await readBody(res);
         const data: unknown = JSON.parse(text);
-        const raw = data && typeof data === "object" ? (data as { title?: unknown }).title : undefined;
-        const title = typeof raw === "string" ? raw.trim() : "";
-        return title ? { title, source: "media-oembed" as const, bytesRead } : null;
+        const body = data && typeof data === "object" ? (data as { title?: unknown; thumbnail_url?: unknown }) : {};
+        const title = typeof body.title === "string" ? body.title.trim() : "";
+        const image = typeof body.thumbnail_url === "string" ? httpsUrl(body.thumbnail_url) : null;
+        return title ? { title, ...(image ? { image } : {}), source: "media-oembed" as const, bytesRead } : null;
       })(),
       combined,
     );

@@ -48,6 +48,11 @@ export type DataSource = {
 
 export type CallOptions = { timeoutMs?: number };
 
+// The one page-body block Satchel writes (SAT-48): an external image or one paragraph.
+export type ImageBlock = { type: "image"; image: { type: "external"; external: { url: string } } };
+export type ParagraphBlock = { type: "paragraph"; paragraph: { rich_text: { type: "text"; text: { content: string } }[] } };
+export type BodyBlock = ImageBlock | ParagraphBlock;
+
 // --- Property builders, keyed by PROPS (never spell a property name inline) ---
 
 // Truncate to Notion's 2000-char limit without splitting a surrogate pair.
@@ -77,6 +82,16 @@ export function checkboxProp(
 
 export function tagIdsProp(ids: string[]): Properties {
   return { [PROPS.tags]: { multi_select: ids.map((id) => ({ id })) } };
+}
+
+// Throws url_too_long past Notion's 2000-char limit, like urlProp.
+export function imageBlock(url: string): ImageBlock {
+  assertUrlLength(url);
+  return { type: "image", image: { type: "external", external: { url } } };
+}
+
+export function paragraphBlock(text: string): ParagraphBlock {
+  return { type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: truncateText(text) } }] } };
 }
 
 // Type guard: a tag reference is exactly {id: string}. A `name` key (or anything else) fails.
@@ -213,6 +228,11 @@ export function notion(env: Env) {
 
     retrievePage(id: string, opts?: CallOptions): Promise<NotionPage> {
       return call<NotionPage>("GET", `/pages/${encodeURIComponent(id)}`, undefined, opts);
+    },
+
+    // SAT-48: appends one block to the end of a page's body (no `position`, so it lands last).
+    appendBlock(pageId: string, block: BodyBlock, opts?: CallOptions): Promise<unknown> {
+      return call<unknown>("PATCH", `/blocks/${encodeURIComponent(pageId)}/children`, { children: [block] }, opts);
     },
   };
 }

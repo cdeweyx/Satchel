@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { lookupTitle } from "../src/title";
 import { lookupX, pageText } from "../src/title/x";
 import articleText from "./fixtures/x-article.json?raw";
 import { network } from "./network";
@@ -550,4 +551,93 @@ describe("SAT-43: pageText", () => {
   ])("null for %s", (_label, title, description) => {
     expect(pageText(title, description)).toBeNull();
   });
+});
+
+describe("SAT-48: an X post's own photo", () => {
+  const PHOTO_HTML =
+    '<blockquote class="twitter-tweet" data-dnt="true"><p lang="en" dir="ltr">Sunset <a href="https://t.co/AbC123">pic.twitter.com/AbC123</a></p>&mdash; Naval (@naval) <a href="https://twitter.com/naval/status/1002103360646823936">May 31, 2018</a></blockquote>\n';
+  const PHOTO_OEMBED = `{"url":"https://x.com/naval/status/${ID}","author_name":"Naval","author_url":"https://twitter.com/naval","html":${esc(PHOTO_HTML)},"type":"rich","version":"1.0"}`;
+  const photoPage = (image: string) =>
+    xPage("Naval (@naval) on X", "Sunset https://t.co/AbC123").replace(
+      "<title>",
+      `<meta property="og:image" content="${image}"/><title>`,
+    );
+
+  it("a post with a pic.twitter.com link reads the page as Twitterbot; its pbs.twimg.com/media og:image is the image", async () => {
+    const { seen, record } = recorder();
+    const page = photoPage("https://pbs.twimg.com/media/GaBc.jpg?format=jpg&amp;name=large");
+    network.use(
+      http.get(OEMBED, ({ request }) => {
+        record(request);
+        return jsonText(PHOTO_OEMBED);
+      }),
+      http.get(PAGE, ({ request }) => {
+        record(request);
+        return htmlText(page);
+      }),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(result).toEqual({
+      title: "Naval: Sunset pic.twitter.com/AbC123",
+      url: `https://x.com/naval/status/${ID}`,
+      description: "Sunset pic.twitter.com/AbC123",
+      author: "Naval",
+      handle: "naval",
+      source: "x-oembed",
+      image: "https://pbs.twimg.com/media/GaBc.jpg?format=jpg&name=large",
+      bytesRead: bytes(PHOTO_OEMBED) + bytes(page),
+    });
+    expect(seen.map((s) => [s.url.split("?")[0], s.userAgent])).toEqual([
+      [OEMBED, null],
+      [PAGE, "Twitterbot/1.0"],
+    ]);
+  });
+
+  it("an avatar og:image is no image; the oEmbed result is unchanged", async () => {
+    network.use(
+      http.get(OEMBED, () => jsonText(PHOTO_OEMBED)),
+      http.get(PAGE, () => htmlText(photoPage("https://pbs.twimg.com/profile_images/1/naval_400x400.jpg"))),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(result?.image).toBeUndefined();
+    expect(result?.title).toBe("Naval: Sunset pic.twitter.com/AbC123");
+  });
+
+  it("the Twitterbot fallback (oEmbed down) keeps a post photo too", async () => {
+    network.use(
+      http.get(OEMBED, () => htmlText(NOT_FOUND_HTML, 404)),
+      http.get(PAGE, () => htmlText(photoPage("https://pbs.twimg.com/media/GaBc.jpg"))),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(result).toMatchObject({ source: "x-twitterbot", image: "https://pbs.twimg.com/media/GaBc.jpg" });
+  });
+
+  it(
+    "a slow oEmbed leaves the photo read only what's left of 4.5 s, so the title survives the 5 s lookup cap",
+    { timeout: 15_000 },
+    async () => {
+      network.use(
+        http.get(OEMBED, async () => {
+          await new Promise((r) => setTimeout(r, 3800));
+          return jsonText(PHOTO_OEMBED);
+        }),
+        http.get(PAGE, () => new Promise<Response>(() => {})),
+      );
+
+      const start = performance.now();
+      const result = await lookupTitle(`https://x.com/i/status/${ID}`, "x", AbortSignal.timeout(5000));
+      const elapsed = performance.now() - start;
+
+      expect(result).toMatchObject({ title: "Naval: Sunset pic.twitter.com/AbC123", source: "x-oembed" });
+      expect(result.image).toBeUndefined();
+      expect(elapsed).toBeGreaterThanOrEqual(4400);
+      expect(elapsed).toBeLessThan(4900);
+    },
+  );
 });

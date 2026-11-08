@@ -233,6 +233,7 @@ Every Worker milestone runs typecheck and tests plus the check below.
 - Door: two-way (code only; the harm it prevents is one-way, which is why it ships in M2 with its own test). Confirm by: M2 test where Claude returns a fake tag and the PATCH body holds only known ids, max 3.
 - Status: proposed (round 0, 2026-11-07).
 - Status: decided (user review, 2026-11-07).
+- Status: extended (SAT-48, 2026-11-08): after its one patch, the background task also writes the new row's page body once: one appended block, the preview image (page `og:image` or `twitter:image`, oEmbed `thumbnail_url`, an X post's own photo) or else the page's description as one paragraph of about 300 characters. Own 3 s, only before the 22 s deadline (so it ends by 25 s), no retry; a failure logs `body_failed` and leaves the row as saved.
 
 ### D-7 Generate the Shortcut from a script and sign on release
 
