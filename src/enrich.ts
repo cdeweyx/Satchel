@@ -108,18 +108,23 @@ function collapse(text: string | undefined): string | undefined {
   return clean ? clean : undefined;
 }
 
-// What Claude sees (D-8, "Rules in full" > Claude request). A client title skips lookup, so
-// Claude gets that title and the URL only. Otherwise an X post with author and text is the
-// `x` shape, a usable looked-up title is `titled`, and anything else is `untitled`.
+// What Claude sees (D-8, "Rules in full" > Claude request). An X post with author and text is
+// the `x` shape, a usable looked-up title is `titled`, and anything else is `untitled`.
+// SAT-41: a client title still runs the lookup, but only for context. An X post with text of
+// its own is the `x` shape; otherwise it's `titled` with the client title plus the looked-up
+// description when there is one (none for a no-text X post, whose "text" is only links). A
+// failed lookup leaves the client title and URL. Never page body text: the description is the
+// page's meta or og description, or the X post text.
 export function toClaudeInput(job: EnrichJob, lookup: LookupResult): ClaudeInput {
   const url = job.storedUrl;
-  if (job.clientTitle !== undefined) return { shape: "titled", title: job.clientTitle, url };
   const text = collapse(lookup.description);
   const author = collapse(lookup.author);
-  if (job.kind === "x" && author && text) {
+  const client = job.clientTitle;
+  if (job.kind === "x" && author && text && (client === undefined || !isNoTextX(lookup))) {
     return { shape: "x", author, ...(lookup.handle ? { handle: lookup.handle } : {}), text, url };
   }
-  const description = text ? { description: text } : {};
+  const description = text && !isNoTextX(lookup) ? { description: text } : {};
+  if (client !== undefined) return { shape: "titled", title: client, ...description, url };
   const title = usableTitle(lookup.title, url);
   if (title !== null) return { shape: "titled", title, ...description, url };
   return { shape: "untitled", ...description, url };
@@ -154,9 +159,10 @@ async function untilAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | ty
 // failure logs `enrich_failed{stage: "schema"}` and skips Claude; an empty option list skips
 // Claude (a zero-length enum would 400, R4); a Claude failure was already logged by claude.ts;
 // the deadline logs `enrich_deadline`. Every path goes on to the re-read and the patch.
-// SAT-37: an X post with no text of its own (and no client title, which skips lookup) skips
-// this stage outright. The stored URL is `x.com/i/status/<id>`, so Claude would have nothing
-// to go on and would invent a contentless Name and guess tags. The fallback Name stays.
+// SAT-37: an X post with no text of its own and no client title skips this stage outright.
+// The stored URL is `x.com/i/status/<id>`, so Claude would have nothing to go on and would
+// invent a contentless Name and guess tags. The fallback Name stays. With a client title
+// (SAT-41) Claude still runs, on the client title.
 async function claudeStage(
   job: EnrichJob,
   lookup: LookupResult,
@@ -165,7 +171,7 @@ async function claudeStage(
   start: number,
 ): Promise<ClaudeStage> {
   const none = (options: TagOptions | null): ClaudeStage => ({ options, title: null, tagNames: [], claude: false });
-  if (isNoTextX(lookup)) return { ...none(null), reason: "no_text_x" };
+  if (job.clientTitle === undefined && isNoTextX(lookup)) return { ...none(null), reason: "no_text_x" };
 
   let options: TagOptions;
   try {
@@ -205,13 +211,14 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
   const timer = setTimeout(() => deadline.abort(), opts.deadlineMs ?? DEADLINE_MS);
   let stage: Stage | "unexpected" = "unexpected";
   try {
-    // Lookup: skipped when the client sent a title.
+    // Lookup: always runs (5 s cap). With a client title (SAT-41) its result is context for
+    // Claude only: the Name and URL decisions and the log see the `client` source, so a
+    // looked-up title never replaces a client title and the URL isn't swapped.
+    const looked = await lookupTitle(job.storedUrl, job.kind, AbortSignal.timeout(LOOKUP_STAGE_MS));
     const lookup: LookupResult =
-      job.clientTitle !== undefined
-        ? { title: null, source: "client", bytesRead: 0 }
-        : await lookupTitle(job.storedUrl, job.kind, AbortSignal.timeout(LOOKUP_STAGE_MS));
+      job.clientTitle !== undefined ? { title: null, source: "client", bytesRead: 0 } : looked;
 
-    const claude = await claudeStage(job, lookup, env, deadline.signal, start);
+    const claude = await claudeStage(job, looked, env, deadline.signal, start);
 
     // From here on nothing runs under the deadline: the re-read and patch keep their own 3 s.
     const client = notion(env);
