@@ -16,6 +16,7 @@ import { network } from "./network";
 const API = "https://api.notion.com/v1";
 const PAGE_ID = "11111111-2222-3333-4444-555555555555";
 const PAGE_URL = `${API}/pages/${PAGE_ID}`;
+const BODY_URL = `${API}/blocks/${PAGE_ID}/children`;
 const DS = "test-data-source-id"; // vitest.config.ts binding
 const SCHEMA_URL = `${API}/data_sources/${DS}`;
 const MESSAGES = "https://api.anthropic.com/v1/messages";
@@ -265,9 +266,14 @@ const pageJob = (over: Partial<EnrichJob> = {}): EnrichJob => ({
 // The tag cache is per isolate, so every test starts cold. The default schema has a Tags
 // property with no options, so Claude is skipped (R4) and the SAT-12 tests below keep
 // exercising lookup, guards and failures on their own. SAT-15 tests mock their own schema.
+// SAT-48: the body append answers 200 by default (unrecorded), so tests from before SAT-48
+// keep their request lists; the SAT-48 tests below mock and record it themselves.
 beforeEach(() => {
   invalidateTagCache();
-  network.use(http.get(SCHEMA_URL, () => HttpResponse.json(schemaBody([]))));
+  network.use(
+    http.get(SCHEMA_URL, () => HttpResponse.json(schemaBody([]))),
+    http.patch(BODY_URL, () => HttpResponse.json({ object: "list", results: [] })),
+  );
 });
 
 afterEach(() => {
@@ -1918,6 +1924,390 @@ describe("SAT-45: an X Article keeps its own title", () => {
       handle: "levie",
       text: "The never-ending last mile of work",
       url: A.storedUrl,
+    });
+  });
+});
+
+describe("SAT-48: the new row's page body gets the preview image or the summary", () => {
+  const imageBody = (url: string) => ({
+    children: [{ type: "image", image: { type: "external", external: { url } } }],
+  });
+  const paragraphBody = (content: string) => ({
+    children: [{ type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content } }] } }],
+  });
+  const head = (inner: string) =>
+    `<html><head><title>Hello World, Properly</title>${inner}</head><body><p>Body text.</p></body></html>`;
+  const X_PAGE = `https://x.com/i/status/${X_ID}`;
+  const xPageHtml = (image: string) =>
+    "<html><head>" +
+    '<meta property="og:title" content="Naval (@naval) on X">' +
+    '<meta property="og:description" content="Look at this https://t.co/AbC123">' +
+    `<meta property="og:image" content="${image}">` +
+    "</head><body></body></html>";
+
+  // Records every append, answering with `status` (an error body when 4xx/5xx) after `delayMs`.
+  function mockBody(record: Record_, opts: { status?: number; code?: string; delayMs?: number } = {}) {
+    const versions: (string | null)[] = [];
+    network.use(
+      http.patch(BODY_URL, async ({ request }) => {
+        versions.push(request.headers.get("notion-version"));
+        await record(request);
+        if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
+        if (opts.status && opts.status >= 400) {
+          return HttpResponse.json(
+            { object: "error", status: opts.status, code: opts.code ?? "internal_server_error", message: "mocked" },
+            { status: opts.status },
+          );
+        }
+        return HttpResponse.json({ object: "list", results: [] });
+      }),
+    );
+    return versions;
+  }
+
+  const appends = (seen: Seen[]) => seen.filter((s) => s.url === BODY_URL);
+  const route = (s: Seen) => `${s.method} ${s.url.split("?")[0]}`;
+
+  it("a page with og:image: after the patch, one append of an external image block", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(
+      ARTICLE,
+      record,
+      head(
+        '<meta property="og:image" content="https://cdn.example.com/cover.jpg?w=1200&amp;h=630">' +
+          '<meta name="twitter:image" content="https://cdn.example.com/twitter.jpg">' +
+          '<meta property="og:description" content="A summary that loses to the image.">',
+      ),
+    );
+    mockNotion(record, { name: "Hello world · example.com" });
+    const versions = mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map(route)).toEqual([`GET ${ARTICLE}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`, `PATCH ${BODY_URL}`]);
+    expect(seen[3]!.body).toEqual(imageBody("https://cdn.example.com/cover.jpg?w=1200&h=630"));
+    expect(versions).toEqual(["2026-03-11"]);
+    expect(logs().map((l) => l.event)).toEqual(["enrich"]);
+  });
+
+  it("no og:image: twitter:image is the image", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta name="twitter:image" content="https://cdn.example.com/twitter.jpg">'));
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    expect(appends(seen).map((s) => s.body)).toEqual([imageBody("https://cdn.example.com/twitter.jpg")]);
+  });
+
+  it("a relative og:image is resolved against the page URL", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta property="og:image" content="images/cover.png?v=2">'));
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    // ARTICLE is https://example.com/post/hello-world, so the image sits beside it under /post/.
+    expect(appends(seen).map((s) => s.body)).toEqual([imageBody("https://example.com/post/images/cover.png?v=2")]);
+  });
+
+  it("an http: og:image isn't used; the description becomes the paragraph instead", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(
+      ARTICLE,
+      record,
+      head(
+        '<meta property="og:image" content="http://cdn.example.com/cover.jpg">' +
+          '<meta property="og:description" content="The summary.">',
+      ),
+    );
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    expect(appends(seen).map((s) => s.body)).toEqual([paragraphBody("The summary.")]);
+  });
+
+  it("YouTube: oEmbed's thumbnail_url is the image", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    const video = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    network.use(
+      http.get("https://www.youtube.com/oembed", async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({
+          title: "Rick Astley - Never Gonna Give You Up",
+          author_name: "Rick Astley",
+          thumbnail_url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+          type: "video",
+        });
+      }),
+    );
+    mockNotion(record, { name: "YouTube video dQw4w9WgXcQ", url: video });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob({ storedUrl: video, kind: "media", fallbackTitle: "YouTube video dQw4w9WgXcQ" }));
+
+    expect(seen.map(route)).toEqual([
+      "GET https://www.youtube.com/oembed",
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+      `PATCH ${BODY_URL}`,
+    ]);
+    expect(seen[3]!.body).toEqual(imageBody("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"));
+  });
+
+  it("X with a photo: the Twitterbot page's pbs.twimg.com/media og:image is the image", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed('Look at this <a href="https://t.co/AbC123">pic.twitter.com/AbC123</a>'));
+    htmlPage(X_PAGE, record, xPageHtml("https://pbs.twimg.com/media/GaBcDeF.jpg?format=jpg&amp;name=large"));
+    mockNotion(record, { name: `X post ${X_ID}` });
+    mockBody(record);
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map(route)).toEqual([
+      `GET ${OEMBED}`,
+      `GET ${X_PAGE}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+      `PATCH ${BODY_URL}`,
+    ]);
+    expect(seen[1]!.userAgent).toBe("Twitterbot/1.0");
+    // The Name still comes from oEmbed's post text.
+    expect(seen[3]!.body).toMatchObject({ properties: nameProp("Look at this pic.twitter.com/AbC123") });
+    expect(seen[4]!.body).toEqual(imageBody("https://pbs.twimg.com/media/GaBcDeF.jpg?format=jpg&name=large"));
+  });
+
+  it.each([
+    ["an avatar", "https://pbs.twimg.com/profile_images/123/naval_400x400.jpg"],
+    ["X's default card", "https://abs.twimg.com/rweb/ssr/default/v2/og/image.png"],
+  ])("X whose og:image is %s: no append", async (_label, image) => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed('Look at this <a href="https://t.co/AbC123">pic.twitter.com/AbC123</a>'));
+    htmlPage(X_PAGE, record, xPageHtml(image));
+    mockNotion(record, { name: `X post ${X_ID}` });
+    mockBody(record);
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map(route)).toContain(`GET ${X_PAGE}`);
+    expect(appends(seen)).toEqual([]);
+  });
+
+  it("X without media: x.com isn't read, and nothing is appended (no paragraph for X)", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("How to Get Rich (without getting lucky):"));
+    htmlPage(X_PAGE, record, xPageHtml("https://pbs.twimg.com/media/GaBcDeF.jpg"));
+    mockNotion(record, { name: `X post ${X_ID}` });
+    mockBody(record);
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map(route)).toEqual([`GET ${OEMBED}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`]);
+    expect(logs().map((l) => l.event)).toEqual(["enrich"]);
+  });
+
+  it("description only: og:description as one paragraph", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(
+      ARTICLE,
+      record,
+      head(
+        '<meta name="description" content="The meta one loses.">' +
+          '<meta property="og:description" content="Wealth is assets that earn &amp; grow while you sleep.">',
+      ),
+    );
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    expect(appends(seen).map((s) => s.body)).toEqual([paragraphBody("Wealth is assets that earn & grow while you sleep.")]);
+  });
+
+  it("description only, long: meta description cut to about 300 characters on a word boundary", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    const words = Array.from({ length: 80 }, (_, i) => `word${i}`).join(" "); // about 500 chars
+    htmlPage(ARTICLE, record, head(`<meta name="description" content="${words}">`));
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    const body = appends(seen)[0]!.body as ReturnType<typeof paragraphBody>;
+    const content = body.children[0]!.paragraph.rich_text[0]!.text.content;
+    expect(content.endsWith("…")).toBe(true);
+    const kept = content.slice(0, -1);
+    expect(kept.length).toBeLessThanOrEqual(300);
+    expect(kept.length).toBeGreaterThan(250);
+    expect(words.startsWith(`${kept} `)).toBe(true); // whole words only
+  });
+
+  it("neither image nor description: no append", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map(route)).toEqual([`GET ${ARTICLE}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`]);
+    expect(logs().map((l) => l.event)).toEqual(["enrich"]);
+  });
+
+  it("nothing to patch (Name edited in Notion) still appends the body", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+    mockNotion(record, { name: "Renamed by me", url: ARTICLE });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map(route)).toEqual([`GET ${ARTICLE}`, `GET ${PAGE_URL}`, `PATCH ${BODY_URL}`]);
+    expect(seen[2]!.body).toEqual(imageBody("https://cdn.example.com/cover.jpg"));
+  });
+
+  it("a client-title save (Chrome) still gets the looked-up image", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+    mockNotion(record, { name: "My tab title" });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob({ clientTitle: "My tab title" }));
+
+    expect(appends(seen).map((s) => s.body)).toEqual([imageBody("https://cdn.example.com/cover.jpg")]);
+  });
+
+  it("an append that 500s: one body_failed with the Notion code, no retry, the patched row stays", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record, { status: 500, code: "internal_server_error" });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map(route)).toEqual([`GET ${ARTICLE}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`, `PATCH ${BODY_URL}`]);
+    expect(seen[2]!.body).toEqual({ properties: LOOKED_UP });
+    expect(logs()).toEqual([
+      expect.objectContaining({ event: "enrich", ok: true, patched: true }),
+      { event: "body_failed", ok: false, pageId: PAGE_ID, block: "image", status: 500, code: "internal_server_error" },
+    ]);
+  });
+
+  it("a hanging append is cut at its own 3 s: body_failed {code: timeout}", { timeout: 15_000 }, async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record, { delayMs: 10_000 });
+
+    const start = performance.now();
+    await runInWaitUntil(pageJob());
+    const elapsed = performance.now() - start;
+
+    expect(appends(seen)).toHaveLength(1);
+    expect(elapsed).toBeGreaterThanOrEqual(2900);
+    expect(elapsed).toBeLessThan(5000);
+    expect(logs().find((l) => l.event === "body_failed")).toMatchObject({ status: 0, code: "timeout" });
+  });
+
+  it("past the deadline by the time the patch is done: no append", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+    mockNotion(record, { name: "Hello world · example.com", rereadDelayMs: 200 });
+    mockBody(record);
+
+    await runInWaitUntil(pageJob(), { deadlineMs: 100 });
+
+    expect(seen.map(route)).toEqual([`GET ${ARTICLE}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`]);
+    expect(logs().map((l) => l.event)).toEqual(["enrich"]);
+  });
+
+  describe("through /save", () => {
+    function post(ctx: ExecutionContext) {
+      return worker.fetch(
+        new Request("https://satchel.test/save", {
+          method: "POST",
+          headers: { "x-satchel-key": "test-satchel-key", "content-type": "application/json" },
+          body: JSON.stringify({ url: ARTICLE, status: "later" }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        env,
+        ctx,
+      );
+    }
+
+    function mockQuery(record: Record_, results: unknown[]) {
+      network.use(
+        http.post(`${API}/data_sources/${DS}/query`, async ({ request }) => {
+          await record(request);
+          return HttpResponse.json({ object: "list", results, has_more: false });
+        }),
+        http.post(`${API}/pages`, async ({ request }) => {
+          await record(request);
+          return HttpResponse.json({ object: "page", id: PAGE_ID, properties: {} });
+        }),
+      );
+    }
+
+    it("a new row: create, then the patch, then the one append", async () => {
+      captureLogs();
+      const { seen, record } = recorder();
+      mockQuery(record, []);
+      htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+      mockNotion(record, { name: "Hello world · example.com" });
+      mockBody(record);
+
+      const ctx = createExecutionContext();
+      const res = await post(ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(200);
+      expect(seen.map(route)).toEqual([
+        `POST ${API}/data_sources/${DS}/query`,
+        `POST ${API}/pages`,
+        `GET ${ARTICLE}`,
+        `GET ${PAGE_URL}`,
+        `PATCH ${PAGE_URL}`,
+        `PATCH ${BODY_URL}`,
+      ]);
+      expect(seen[5]!.body).toEqual(imageBody("https://cdn.example.com/cover.jpg"));
+    });
+
+    it("a re-save (dedupe hit): only the status patch, no lookup and no append", async () => {
+      captureLogs();
+      const { seen, record } = recorder();
+      mockQuery(record, [{ object: "page", id: PAGE_ID, properties: { [PROPS.url]: { url: ARTICLE } } }]);
+      htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+      mockNotion(record, { name: "Hello world · example.com" });
+      mockBody(record);
+
+      const ctx = createExecutionContext();
+      const res = await post(ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(await res.json()).toEqual({ ok: true, id: PAGE_ID });
+      expect(seen.map(route)).toEqual([`POST ${API}/data_sources/${DS}/query`, `PATCH ${PAGE_URL}`]);
+      expect(seen[1]!.body).toEqual({
+        properties: { [PROPS.archived]: { checkbox: false }, [PROPS.favorite]: { checkbox: false } },
+      });
     });
   });
 });

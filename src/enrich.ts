@@ -3,7 +3,18 @@ import { PROPS } from "./config";
 import type { EnrichJob } from "./contract";
 import { isMissingTitle } from "./fallback-title";
 import { logEvent } from "./log";
-import { NotionError, type Properties, notion, tagIdsProp, titleProp, truncateText, urlProp } from "./notion";
+import {
+  type BodyBlock,
+  type NotionClient,
+  NotionError,
+  type Properties,
+  notion,
+  tagIdsProp,
+  titleProp,
+  truncateText,
+  urlProp,
+} from "./notion";
+import { previewBlock } from "./preview";
 import { type TagOptions, getTagOptions, guardTags, invalidateTagCache } from "./tags";
 import { type LookupResult, lookupTitle } from "./title";
 import { isOnlyLinks } from "./title/x";
@@ -15,11 +26,16 @@ import { isOnlyLinks } from "./title/x";
 // never do. Satchel never retries Notion (D-10): any NotionError logs `enrich_failed` with
 // its stage and stops, leaving the row as saved. The one exception is D-6's re-patch after a
 // schema change (a tag patch rejected with validation_error). Never throws.
+// SAT-48: after the patch, one append writes the page body (previewBlock: the preview image or
+// a one-paragraph summary), with its own 3 s and only while the task is still before its
+// deadline. A failure logs `body_failed` and leaves the row as saved.
 
 const LOOKUP_STAGE_MS = 5000;
 const REREAD_MS = 3000;
 const PATCH_MS = 3000;
+const BODY_MS = 3000;
 // Measured from task start. Worst case 5 + 3 + 10 + 3 + 3 = 24 s, under Cloudflare's 30 s.
+// The body append starts only before the deadline, so it ends by 22 + 3 = 25 s.
 export const DEADLINE_MS = 22_000;
 
 export type EnrichOptions = { deadlineMs?: number };
@@ -212,6 +228,25 @@ function failed(stage: Stage | "unexpected", pageId: unknown, err: unknown): voi
   logEvent("enrich_failed", fields);
 }
 
+// SAT-48: the page body, written once. Enrich only runs after a create (save.ts), so this is
+// always a row this save created. Nothing to add, or the deadline already passed: no call.
+// No retry (D-10); a failure logs `body_failed` with the Notion code and the row stays as saved.
+async function writeBody(client: NotionClient, pageId: string, block: BodyBlock | null, deadline: AbortSignal) {
+  if (block === null || deadline.aborted) return;
+  try {
+    await client.appendBlock(pageId, block, { timeoutMs: BODY_MS });
+  } catch (err) {
+    const fields: Record<string, unknown> = { ok: false, pageId, block: block.type };
+    if (err instanceof NotionError) {
+      fields.status = err.status;
+      fields.code = err.code;
+    } else {
+      fields.code = err instanceof Error ? err.name : "unknown";
+    }
+    logEvent("body_failed", fields);
+  }
+}
+
 export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {}): Promise<void> {
   const start = Date.now();
   // One signal for the whole task, fired deadlineMs after start. Only Claude listens to it.
@@ -270,25 +305,28 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
 
     if (Object.keys(props).length === 0) {
       done(false);
-      return;
+    } else {
+      try {
+        await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
+      } catch (err) {
+        // D-6: a tag patch rejected with validation_error means the options changed under the
+        // cache. Refetch once, rebuild the ids from Claude's names, patch once more (R5). Any
+        // other failure, or one on the re-patch, is enrich_failed like everywhere else.
+        if (!(err instanceof NotionError && err.code === "validation_error" && tags.length > 0)) throw err;
+        invalidateTagCache();
+        stage = "schema";
+        const fresh = await getTagOptions(env);
+        stage = "patch";
+        tags = guardTags(claude.tagNames, fresh);
+        setTags();
+        await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
+      }
+      done(true);
     }
 
-    try {
-      await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
-    } catch (err) {
-      // D-6: a tag patch rejected with validation_error means the options changed under the
-      // cache. Refetch once, rebuild the ids from Claude's names, patch once more (R5). Any
-      // other failure, or one on the re-patch, is enrich_failed like everywhere else.
-      if (!(err instanceof NotionError && err.code === "validation_error" && tags.length > 0)) throw err;
-      invalidateTagCache();
-      stage = "schema";
-      const fresh = await getTagOptions(env);
-      stage = "patch";
-      tags = guardTags(claude.tagNames, fresh);
-      setTags();
-      await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
-    }
-    done(true);
+    // SAT-48: from the lookup itself, so a client-title save still gets its preview.
+    stage = "unexpected";
+    await writeBody(client, job.pageId, previewBlock(looked), deadline.signal);
   } catch (err) {
     try {
       failed(err instanceof NotionError ? stage : "unexpected", job?.pageId, err);

@@ -5,6 +5,8 @@
 // Never throws: any failure (network, abort, timeout, bad status, wrong content type,
 // unexpected shape) returns null, because the save path relies on it (SAT-12).
 
+import { isXPostMedia } from "../preview";
+
 export type XTitle = {
   title: string;
   url?: string;
@@ -15,10 +17,17 @@ export type XTitle = {
   // SAT-45: the text is an X Article's title, read from x.com's page because oEmbed's post
   // text was only links (SAT-43). Absent on every other result.
   article?: true;
+  // SAT-48: the post's own photo (pbs.twimg.com/media/…) from x.com's og:image, when read.
+  image?: string;
   bytesRead: number;
 };
 
 const FETCH_TIMEOUT_MS = 4000;
+// SAT-48: a post whose oEmbed text shows a photo link reads x.com's page for the photo, but
+// only until this long after lookupX started, so the extra read can't push the lookup past
+// enrich's 5 s stage cap and cost the post's title.
+const IMAGE_READ_BY_MS = 4500;
+const MEDIA_LINK = /\bpic\.twitter\.com\//i;
 // The x.com page is ~51 KB and its og tags sit in <head>; never read past this.
 const PAGE_CAP_BYTES = 256 * 1024;
 const TWITTERBOT_UA = "Twitterbot/1.0";
@@ -147,11 +156,14 @@ const OG_TITLE_QUOTED = /^.+? on X: "(.*)" \/ X$/s;
 // X's logged-out page: its og:description when the page describes no post.
 const GENERIC_DESCRIPTION = /^From breaking news and entertainment to sports and politics\b/i;
 
-type Page = { ok: true; ogTitle: string; ogDescription: string; bytesRead: number } | { ok: false; bytesRead: number };
+type Page =
+  | { ok: true; ogTitle: string; ogDescription: string; image?: string; bytesRead: number }
+  | { ok: false; bytesRead: number };
 
 // x.com's post page as Twitterbot, read up to </head> or 256 KB: og:title and og:description
-// entity-decoded and trimmed ("" when absent). `ok: false` on any failure (network, abort,
-// timeout, bad status, non-HTML). Never throws.
+// entity-decoded and trimmed ("" when absent). `image` is og:image, entity-decoded, kept only
+// when it's the post's own photo (SAT-48), never an avatar or X's default card. `ok: false`
+// on any failure (network, abort, timeout, bad status, non-HTML). Never throws.
 async function readPage(id: string, signal: AbortSignal): Promise<Page> {
   let bytesRead = 0;
   try {
@@ -166,6 +178,7 @@ async function readPage(id: string, signal: AbortSignal): Promise<Page> {
 
     let ogTitle: string | null = null;
     let ogDescription: string | null = null;
+    let ogImage: string | null = null;
     let headDone = false;
     const counter = new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
@@ -182,6 +195,11 @@ async function readPage(id: string, signal: AbortSignal): Promise<Page> {
       .on('meta[property="og:description"]', {
         element(el) {
           ogDescription ??= el.getAttribute("content");
+        },
+      })
+      .on('meta[property="og:image"]', {
+        element(el) {
+          ogImage ??= el.getAttribute("content");
         },
       })
       .on("head", {
@@ -204,10 +222,12 @@ async function readPage(id: string, signal: AbortSignal): Promise<Page> {
     }
 
     // HTMLRewriter hands back attribute values with entities still encoded.
+    const image = decodeEntities(ogImage ?? "").trim();
     return {
       ok: true,
       ogTitle: decodeEntities(ogTitle ?? "").trim(),
       ogDescription: decodeEntities(ogDescription ?? "").trim(),
+      ...(isXPostMedia(image) ? { image } : {}),
       bytesRead,
     };
   } catch {
@@ -229,6 +249,7 @@ async function viaTwitterbot(id: string, signal: AbortSignal): Promise<Attempt> 
       description,
       author,
       handle: m[2],
+      ...(page.image ? { image: page.image } : {}),
       source: "x-twitterbot",
       bytesRead: page.bytesRead,
     },
@@ -257,21 +278,43 @@ export function pageText(ogTitle: string, ogDescription: string): string | null 
  * canonical `x.com/<user>/status/<id>`), then the Twitterbot read of x.com. When oEmbed's
  * post text is only links (SAT-43), the Twitterbot page is read for the text, oEmbed keeps
  * the rest and the result is marked `article: true` (SAT-45); a page that fails or describes
- * no post leaves oEmbed's result as it was. Each fetch gets 4 s on top of the caller's
+ * no post leaves oEmbed's result as it was. SAT-48: a post whose text shows a pic.twitter.com
+ * link also reads the page, for its photo only; any page read sets `image` when og:image is
+ * the post's own photo. Each fetch gets 4 s on top of the caller's
  * signal. `bytesRead` is every body byte read across both fetches. Null on any failure;
  * never throws.
  */
 export async function lookupX(id: string, signal: AbortSignal): Promise<XTitle | null> {
   try {
     if (!/^\d{1,25}$/.test(id) || signal.aborted) return null;
+    const started = Date.now();
     const first = await viaOembed(id, signal);
     if (first.result) {
-      if (!isOnlyLinks(first.result.description) || signal.aborted) return first.result;
+      const onlyLinks = isOnlyLinks(first.result.description);
+      const photoLink = MEDIA_LINK.test(first.result.description ?? "");
+      if ((!onlyLinks && !photoLink) || signal.aborted) return first.result;
+      if (!onlyLinks) {
+        // SAT-48: a post with its own text and a photo link. The page is read for the photo
+        // alone, inside IMAGE_READ_BY_MS; any failure keeps oEmbed's result as it was.
+        const left = IMAGE_READ_BY_MS - (Date.now() - started);
+        if (left <= 0) return first.result;
+        const page = await readPage(id, AbortSignal.any([signal, AbortSignal.timeout(left)]));
+        const image = page.ok && page.image ? { image: page.image } : {};
+        return { ...first.result, ...image, bytesRead: first.bytesRead + page.bytesRead };
+      }
       const page = await readPage(id, signal);
       const bytesRead = first.bytesRead + page.bytesRead;
+      const image = page.ok && page.image ? { image: page.image } : {};
       const text = page.ok ? pageText(page.ogTitle, page.ogDescription) : null;
-      if (!text) return { ...first.result, bytesRead };
-      return { ...first.result, title: `${first.result.author}: ${text}`, description: text, article: true, bytesRead };
+      if (!text) return { ...first.result, ...image, bytesRead };
+      return {
+        ...first.result,
+        title: `${first.result.author}: ${text}`,
+        description: text,
+        article: true,
+        ...image,
+        bytesRead,
+      };
     }
     if (signal.aborted) return null;
     const second = await viaTwitterbot(id, signal);

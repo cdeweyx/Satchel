@@ -2,10 +2,14 @@
 // with a link-preview crawler UA, parses the head with HTMLRewriter, and stops reading at
 // `</head>` or 256 KB, whichever comes first (L3: crawler UA wins on Spotify, TikTok, NYT).
 // Never throws: any failure (non-2xx, non-HTML, network error, timeout) returns null.
+// SAT-48: the same read also picks up the preview image (og:image, else twitter:image).
+
+import { httpsUrl } from "../preview";
 
 export type PageLookup = {
   title: string | null;
   description?: string;
+  image?: string;
   source: "page";
   bytesRead: number;
 };
@@ -28,6 +32,8 @@ type Head = {
   ogTitle?: string;
   description?: string;
   ogDescription?: string;
+  ogImage?: string;
+  twitterImage?: string;
   headEnded: boolean;
 };
 
@@ -49,7 +55,8 @@ export async function lookupPage(stored: string, signal: AbortSignal): Promise<P
       return null;
     }
     const { head, bytesRead } = await readHead(res);
-    return pick(head, bytesRead);
+    // Relative images resolve against where the page ended up after redirects.
+    return pick(head, bytesRead, res.url || stored);
   } catch {
     await res.body?.cancel().catch(() => {});
     return null;
@@ -115,6 +122,21 @@ async function readHead(res: Response): Promise<{ head: Head; bytesRead: number 
         head.ogDescription ??= nonBlank(el.getAttribute("content"));
       },
     })
+    .on('meta[property="og:image"]', {
+      element(el) {
+        head.ogImage ??= nonBlank(el.getAttribute("content"));
+      },
+    })
+    .on('meta[name="twitter:image"]', {
+      element(el) {
+        head.twitterImage ??= nonBlank(el.getAttribute("content"));
+      },
+    })
+    .on('meta[property="twitter:image"]', {
+      element(el) {
+        head.twitterImage ??= nonBlank(el.getAttribute("content"));
+      },
+    })
     .on("head", {
       element(el) {
         el.onEndTag(() => {
@@ -147,19 +169,26 @@ function nonBlank(value: string | null): string | undefined {
 }
 
 // og:title, then <title>, then the description's first 80 chars, then null. Each candidate is
-// entity-decoded and whitespace-collapsed; an all-whitespace one falls through.
-function pick(head: Head, bytesRead: number): PageLookup {
+// entity-decoded and whitespace-collapsed; an all-whitespace one falls through. The image is
+// og:image, else twitter:image, entity-decoded, resolved against `base`, https: only.
+function pick(head: Head, bytesRead: number, base: string): PageLookup {
   const description = clean(head.ogDescription) ?? clean(head.description);
   const title =
     clean(head.ogTitle) ??
     clean(head.title) ??
     (description ? Array.from(description).slice(0, DESCRIPTION_TITLE_CHARS).join("").trim() : null);
+  const image = pageImage(head.ogImage, base) ?? pageImage(head.twitterImage, base);
   return {
     title,
     ...(description ? { description } : {}),
+    ...(image ? { image } : {}),
     source: "page",
     bytesRead,
   };
+}
+
+function pageImage(raw: string | undefined, base: string): string | null {
+  return raw === undefined ? null : httpsUrl(decodeEntities(raw), base);
 }
 
 function clean(raw: string | undefined): string | null {
