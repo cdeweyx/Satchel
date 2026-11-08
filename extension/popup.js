@@ -1,13 +1,13 @@
 // Satchel popup (SAT-20). Keyboard-first: L sends to inbox, R marks as archived,
-// F favorites for 1.5 s after R, esc closes. Every action also works
+// F favorites for 3 s after R, esc closes. Every action also works
 // with a click, and arrow keys / Tab / Enter work on the rows.
 //
 // The service worker owns every save (contract at the top of background.js). The popup
 // only sends {type: "save", url, title, status}, shows the reply, and holds the "popup"
 // port while it's open so a failure it can show doesn't also badge the toolbar icon.
 
-const FAVORITE_WINDOW_MS = 1500;
-const CLOSE_AFTER_MS = 350; // after the reply: the save beat, then close
+const FAVORITE_WINDOW_MS = 3000;
+const CLOSE_AFTER_MS = 600; // after the reply: the save beat, then close
 const POPUP_PORT = "popup";
 const NO_REPLY = "no reply";
 const LABELS = { later: "Send to inbox", read: "Mark as archived", favorite: "Favorite" };
@@ -142,7 +142,7 @@ function openWindow() {
   windowTimer = setTimeout(endWindow, FAVORITE_WINDOW_MS);
 }
 
-// Esc, Enter, any other key, or the 1.5 s running out: settle the read save.
+// Esc, Enter, any other key, or the 3 s running out: settle the read save.
 async function endWindow() {
   if (state !== "window") return;
   clearTimeout(windowTimer);

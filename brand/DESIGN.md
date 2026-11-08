@@ -63,12 +63,12 @@ Unlike the wordmark, the icon's plate is filled with flax inside the outer rule,
 
 ## The save beat
 
-The whole beat finishes in under 400 ms. No toast, no checkmark.
+The whole beat finishes in 600 ms. No toast, no checkmark.
 
 1. The pressed keycap fills stamp blue.
 2. A SAVED plate (Besley 800 / 14 px, tracking 0.08em, a 2 px rule around a 1 px rule, tilted -4°) drops 2 px in 120 ms, ease-out.
 3. A 60 ms ink spread settles it.
-4. The popup closes at 350 ms.
+4. The popup closes at 600 ms, a beat to enjoy SAVED.
 
 ## Keyboard
 
@@ -76,7 +76,7 @@ The whole beat finishes in under 400 ms. No toast, no checkmark.
 |---|---|
 | `L` | Send to inbox |
 | `R` | Mark as archived |
-| `F` | Favorite. It's a follow-on: after `R`, a Favorite row slides in for 1.5 s. Any other key closes. |
+| `F` | Favorite. It's a follow-on: after `R`, a Favorite row slides in for 3 s. Any other key closes. |
 | `esc` | Close |
 | `?` | Show the keys |
 
