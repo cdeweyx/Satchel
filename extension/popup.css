@@ -1,0 +1,323 @@
+/* Satchel popup: The Maker's Stamp. Values from the Paper "Final" page, popup
+   frames (a), (b), (c) and dark (a). Colors, radius and type come only from
+   var(--satchel-*) in tokens.css; sizes derive from --satchel-font-size (14 px). */
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--satchel-bg);
+}
+
+body {
+  width: 320px;
+  color: var(--satchel-fg);
+  font-family: var(--satchel-font);
+  font-size: calc(var(--satchel-font-size) * 6 / 7); /* 12 */
+  line-height: 16px;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-wrap: anywhere;
+}
+
+.popup {
+  /* Final's keycap fill and esc letter sit between the tokens; mixed, not new hexes. */
+  --cap-fill: color-mix(in srgb, var(--satchel-bg) 37%, white);
+  --esc-ink: color-mix(in srgb, var(--satchel-fg) 44%, var(--satchel-muted));
+  --esc-fill: transparent;
+  --row-wash: color-mix(in srgb, var(--satchel-fg) 5%, transparent);
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-color-scheme: dark) {
+  .popup {
+    --cap-fill: color-mix(in srgb, var(--satchel-fg) 3.5%, var(--satchel-bg));
+    --esc-ink: var(--satchel-muted);
+    --esc-fill: var(--cap-fill);
+    --row-wash: color-mix(in srgb, var(--satchel-fg) 6%, transparent);
+  }
+}
+
+/* ---- head: domain, then the title ---- */
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid var(--satchel-rule);
+}
+
+.source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mark {
+  flex-shrink: 0;
+  color: var(--satchel-accent);
+}
+
+.domain {
+  color: var(--satchel-muted);
+  font-size: calc(var(--satchel-font-size) * 6 / 7); /* 12 */
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.title {
+  margin: 0;
+  color: var(--satchel-fg);
+  font-size: calc(var(--satchel-font-size) * 8 / 7); /* 16 */
+  font-weight: 600;
+  line-height: 21px;
+  letter-spacing: -0.01em;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/* ---- rows ---- */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--satchel-radius);
+  background: transparent;
+  color: var(--satchel-fg);
+  font: inherit;
+  font-size: var(--satchel-font-size);
+  line-height: 20px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
+}
+
+/* The selection. Hover has no cue of its own: it moves focus, so it moves this. */
+.row:focus-visible,
+.row.is-current {
+  background: var(--row-wash);
+}
+
+.row:disabled {
+  cursor: default;
+}
+
+.row:disabled:not(.is-active):not(.is-current) {
+  opacity: 0.45;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.label-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.star {
+  flex-shrink: 0;
+  color: var(--satchel-fg);
+}
+
+.row-favorite:not([hidden]) {
+  animation: slide-in 120ms ease-out;
+}
+
+/* ---- error: same row, swapped label, ink not red ---- */
+
+.row.is-error {
+  padding-block: 6px;
+}
+
+.row.is-error .label-text {
+  color: var(--satchel-danger);
+}
+
+.detail {
+  color: var(--satchel-danger);
+  font-family: var(--satchel-font-mono);
+  font-size: calc(var(--satchel-font-size) * 6 / 7); /* 12 */
+  line-height: 16px;
+}
+
+/* ---- keycaps ---- */
+
+.cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--satchel-rule);
+  border-radius: calc(var(--satchel-radius) - 1px); /* 5 */
+  background: var(--cap-fill);
+  color: var(--satchel-fg);
+  font-family: var(--satchel-font-mono);
+  font-size: calc(var(--satchel-font-size) * 6 / 7); /* 12 */
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.row.is-active .cap {
+  border-color: var(--satchel-accent);
+  background: var(--satchel-accent);
+  color: var(--satchel-bg);
+}
+
+.row.is-error .cap {
+  border-color: var(--satchel-fg);
+}
+
+.cap-esc {
+  width: auto;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: calc(var(--satchel-radius) - 2px); /* 4 */
+  background: var(--esc-fill);
+  color: var(--esc-ink);
+  font-size: calc(var(--satchel-font-size) * 5 / 7); /* 10 */
+  font-weight: 400;
+  line-height: 12px;
+}
+
+/* ---- the SAVED stamp ---- */
+
+.stamp {
+  position: absolute;
+  left: 124px;
+  top: 7px;
+  display: flex;
+  padding: 2px;
+  border: 2px solid var(--satchel-accent);
+  border-radius: var(--satchel-radius);
+  opacity: 0.94;
+  transform-origin: 0 0;
+  transform: rotate(-4deg);
+  pointer-events: none;
+}
+
+.stamp-inner {
+  display: flex;
+  padding: 1px 8px 0;
+  border: 1px solid var(--satchel-accent);
+  border-radius: calc(var(--satchel-radius) / 2); /* 3 */
+  color: var(--satchel-accent);
+  font-family: var(--satchel-font-display);
+  font-size: var(--satchel-font-size);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 18px;
+}
+
+/* The beat: the plate drops 2 px in 120 ms (ease-out), then a 60 ms ink spread. */
+.row.is-saved .stamp {
+  animation:
+    stamp-drop 120ms ease-out both,
+    ink-spread 60ms ease-out 120ms both;
+}
+
+@keyframes stamp-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) rotate(-4deg);
+  }
+  to {
+    opacity: 0.94;
+    transform: translateY(0) rotate(-4deg);
+  }
+}
+
+@keyframes ink-spread {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--satchel-accent) 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--satchel-accent) 18%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row.is-saved .stamp,
+  .row-favorite:not([hidden]) {
+    animation: none;
+  }
+}
+
+/* ---- footer ---- */
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 18px;
+  border-top: 1px solid var(--satchel-rule);
+  padding: 10px 16px;
+  color: var(--satchel-muted);
+}
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
