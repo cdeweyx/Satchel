@@ -31,8 +31,9 @@ Merged on `main`:
 - URL canonicalization with a strip table and fixtures (SAT-2).
 - Notion client over plain `fetch`, with no retry (SAT-3).
 - Fallback titles built from the URL (SAT-5).
+- Router with key auth, body validation, CORS preflight on `/save` and `/health`, and JSON errors for every code (SAT-4).
 
-In progress: the router with auth, CORS and JSON errors (SAT-4), and the `/save` handler (SAT-6). Today the Worker only answers `GET /health` and returns `not_found` for everything else.
+Left in M0: the `/save` handler that writes the row (SAT-6), then the first deploy and real-database check (SAT-7). Today `POST /save` checks the key and body, then returns 500 `internal` from the stub handler. `GET /health` answers keyless liveness.
 
 Roadmap:
 
@@ -49,7 +50,7 @@ Roadmap:
 
 ## Repo layout
 
-- `src/index.ts`: the Worker entry and router.
+- `src/index.ts`: the Worker entry and router. Checks the `x-satchel-key` header in constant time, validates the save body, answers CORS preflights and 405s.
 - `src/save.ts`: `POST /save` (stub until SAT-6).
 - `src/enrich.ts`: the background title lookup and Claude call (stub until M1 / M2).
 - `src/health.ts`: `GET /health` (keyless liveness today; keyed probes in M2).
