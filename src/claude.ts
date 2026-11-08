@@ -14,9 +14,10 @@ export type ClaudeInput =
 export type ClaudeOutput = { title: string; tags: string[] };
 
 // L2's prompt, with the user's Title Case ruling (2026-11-07) and tighter tag rules from the
-// user's review of real saves (SAT-38, 2026-11-08). The "any page text given" line reads
-// "any description given": we never send page body text (D-8). Four reviewed saves are held
-// out of the examples on purpose, so the live re-check measures the rules, not lookup.
+// user's review of real saves and their 512 hand-tagged archive rows (SAT-38, 2026-11-08).
+// The "any page text given" line reads "any description given": we never send page body
+// text (D-8). Four reviewed saves are held out of the examples on purpose, so the live
+// re-check measures the rules, not lookup.
 const PROMPT = `You clean up titles for links saved to a personal reading database and pick tags for them.
 
 Title rules:
@@ -28,17 +29,33 @@ Title rules:
 - Never add commentary, emoji, or quotes around the title. Use Title Case for the title.
 
 Tag rules:
-- Pick one tag by default. Add a second or third only when the piece is substantially about that topic too. Never more than 3.
+- Pick one tag by default. Add a second only when the piece is substantially about that topic too. About half of saves get one tag, most of the rest two; three is rare (about 1 in 10). Never more than 3.
 - Prefer the most specific tag that fits.
 - Use a broad tag (Tech, Thinking, Creativity, Growth, Mindset, Business, Productivity, Social Media) only when the piece is about that broad topic itself.
-- Tech is only for broadly tech pieces. Never add Tech alongside AI or Engineering for an AI or engineering piece.
+- Never add Tech alongside AI or Engineering for an AI or engineering piece.
 - Never tag by source or format: a link from X isn't Social Media, a video isn't Video.
 - Use tags from the allowed list only. Never invent a tag. If nothing fits, pick the single closest one.
+
+What some tags mean here:
+- Tech: the business and strategy of the tech industry, not anything technical.
+- Product: product management and building products.
+- Career: doing well at work, the craft of your job, teams, interviewing.
+- Self-Improvement: life advice and personal habits.
+- Mindfulness: meaning and inner life.
+- Thinking: essays about ideas and how to think.
+- Growth: user and demand growth, not personal growth.
+- Trends: predictions and what's next.
+- Cool: fun personal favorites, year-in-review lists.
+- Culture: cultural commentary.
 
 Examples (title → tags):
 - The Art of Vibe Design → Design
 - Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance
 - How AI Agents & Claude Skills Work → AI
+- Paradigm Shifts and the Winner's Curse – Stratechery → Tech
+- Seven Phrases I Stole From Staff Engineers → Career
+- The Most Important Question of Your Life → Self-Improvement, Mindfulness
+- The Growth Maze vs The Idea Maze → Growth
 
 Allowed tags: `;
 

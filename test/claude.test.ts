@@ -68,6 +68,15 @@ function logLines(spy: ReturnType<typeof vi.spyOn>) {
 
 const signal = () => new AbortController().signal;
 
+// The lines of a prompt section, from its heading up to the next heading.
+function section(prompt: string, from: string, to: string): string[] {
+  const start = prompt.indexOf(from);
+  const end = prompt.indexOf(to, start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return prompt.slice(start, end).trim().split("\n");
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -140,30 +149,57 @@ describe("request shape", () => {
 
   it("system prompt tags fewer and more specific: one by default, broad tags gated, no source or format tags", () => {
     const prompt = systemPrompt(TAGS);
-    expect(prompt).toContain("- Pick one tag by default. Add a second or third only when the piece is substantially about that topic too. Never more than 3.");
+    expect(prompt).toContain(
+      "- Pick one tag by default. Add a second only when the piece is substantially about that topic too. About half of saves get one tag, most of the rest two; three is rare (about 1 in 10). Never more than 3.",
+    );
     expect(prompt).toContain("- Prefer the most specific tag that fits.");
     expect(prompt).toContain(
       "- Use a broad tag (Tech, Thinking, Creativity, Growth, Mindset, Business, Productivity, Social Media) only when the piece is about that broad topic itself.",
     );
-    expect(prompt).toContain(
-      "- Tech is only for broadly tech pieces. Never add Tech alongside AI or Engineering for an AI or engineering piece.",
-    );
+    expect(prompt).toContain("- Never add Tech alongside AI or Engineering for an AI or engineering piece.");
     expect(prompt).toContain("- Never tag by source or format: a link from X isn't Social Media, a video isn't Video.");
     expect(prompt).toContain("Never invent a tag. If nothing fits, pick the single closest one.");
     expect(prompt).not.toContain("Pick 1 to 3 tags");
   });
 
-  it("system prompt holds exactly the three examples and none of the four held-out titles", () => {
+  it("system prompt gives a one-line meaning for exactly the ten archive tags", () => {
+    expect(section(systemPrompt(TAGS), "What some tags mean here:", "Examples (title → tags):")).toEqual([
+      "What some tags mean here:",
+      "- Tech: the business and strategy of the tech industry, not anything technical.",
+      "- Product: product management and building products.",
+      "- Career: doing well at work, the craft of your job, teams, interviewing.",
+      "- Self-Improvement: life advice and personal habits.",
+      "- Mindfulness: meaning and inner life.",
+      "- Thinking: essays about ideas and how to think.",
+      "- Growth: user and demand growth, not personal growth.",
+      "- Trends: predictions and what's next.",
+      "- Cool: fun personal favorites, year-in-review lists.",
+      "- Culture: cultural commentary.",
+    ]);
+  });
+
+  it("system prompt holds exactly the seven examples and none of the four held-out titles", () => {
     const prompt = systemPrompt(TAGS);
-    const examples = prompt.slice(prompt.indexOf("Examples (title → tags):"), prompt.indexOf("Allowed tags: "));
-    expect(examples.trim().split("\n")).toEqual([
+    expect(section(prompt, "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
       "- Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
       "- How AI Agents & Claude Skills Work → AI",
+      "- Paradigm Shifts and the Winner's Curse – Stratechery → Tech",
+      "- Seven Phrases I Stole From Staff Engineers → Career",
+      "- The Most Important Question of Your Life → Self-Improvement, Mindfulness",
+      "- The Growth Maze vs The Idea Maze → Growth",
     ]);
     // Held out for the lead's live re-check (SAT-38): the prompt must not carry their answers.
-    for (const heldOut of ["Levie", "last mile", "Good Retention", "Lenny", "Harder to Find", "Asterisk", "Leadership Lessons"]) {
+    for (const heldOut of [
+      "Levie",
+      "last mile",
+      "Retention",
+      "Lenny",
+      "Harder to Find",
+      "Asterisk",
+      "Leadership Lessons",
+    ]) {
       expect(prompt).not.toContain(heldOut);
     }
   });
