@@ -50,6 +50,32 @@ function currentName(properties: Record<string, unknown> | undefined): string | 
   return text;
 }
 
+// R4: the re-read Name still reads as what save wrote. Save wrote it through titleProp,
+// which truncates at 2000, so a long client title is compared truncated, like for like.
+export function nameUnchanged(job: EnrichJob, now: string | null): boolean {
+  if (now === null) return false;
+  return now.trim() === truncateText(job.clientTitle ?? job.fallbackTitle).trim();
+}
+
+// The URL property's value from the re-read, or null when the shape is off.
+function currentUrl(properties: Record<string, unknown> | undefined): string | null {
+  const url = (properties?.[PROPS.url] as { url?: unknown } | undefined)?.url;
+  return typeof url === "string" ? url : null;
+}
+
+// R5 plus the lead's PR #17 rulings: X only, oEmbed's canonical when it differs from what's
+// stored, and only while the row's URL is still the stored one (an edit in Notion wins).
+// urlProp's 2000 guard (or any other throw) drops just the URL, never the Name.
+function urlSwap(job: EnrichJob, lookup: LookupResult, now: string | null): Properties {
+  if (job.kind !== "x" || !lookup.url || lookup.url === job.storedUrl) return {};
+  if (now !== job.storedUrl) return {};
+  try {
+    return urlProp(lookup.url);
+  } catch {
+    return {};
+  }
+}
+
 function failed(stage: Stage | "unexpected", pageId: unknown, err: unknown): void {
   const fields: Record<string, unknown> = { ok: false, stage, pageId };
   if (err instanceof NotionError) {
@@ -82,17 +108,12 @@ export async function enrich(job: EnrichJob, env: Env): Promise<void> {
     const props: Properties = {};
 
     const name = usableTitle(claudeTitle, job.storedUrl) ?? usableTitle(lookup.title, job.storedUrl);
-    if (name !== null) {
-      const created = truncateText((job.clientTitle ?? job.fallbackTitle).trim()).trim();
-      const now = currentName(page.properties);
-      if (now !== null && now.trim() === created) Object.assign(props, titleProp(name));
+    if (name !== null && nameUnchanged(job, currentName(page.properties))) {
+      Object.assign(props, titleProp(name));
     }
+    Object.assign(props, urlSwap(job, lookup, currentUrl(page.properties)));
 
     stage = "patch";
-    // R5: X only, oEmbed's canonical when it differs from what's stored. urlProp guards 2000.
-    if (job.kind === "x" && lookup.url && lookup.url !== job.storedUrl) {
-      Object.assign(props, urlProp(lookup.url));
-    }
 
     if (Object.keys(props).length === 0) {
       logEvent("enrich", {

@@ -4,7 +4,7 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PROPS } from "../src/config";
 import type { EnrichJob } from "../src/contract";
-import { enrich } from "../src/enrich";
+import { enrich, nameUnchanged } from "../src/enrich";
 import { lookupTitle } from "../src/title";
 import { PAGE_UA } from "../src/title/page";
 import { network } from "./network";
@@ -46,7 +46,7 @@ function recorder() {
 }
 
 // A re-read page whose Name is `name`, split across two rich-text runs to exercise the join.
-function notionPage(name: string) {
+function notionPage(name: string, url: string | null = X_STORED) {
   const half = Math.ceil(name.length / 2);
   const run = (s: string) => ({
     type: "text",
@@ -60,7 +60,7 @@ function notionPage(name: string) {
     id: PAGE_ID,
     properties: {
       [PROPS.name]: { id: "title", type: "title", title: [run(name.slice(0, half)), run(name.slice(half))] },
-      [PROPS.url]: { id: "u", type: "url", url: X_STORED },
+      [PROPS.url]: { id: "u", type: "url", url },
     },
   };
 }
@@ -68,7 +68,13 @@ function notionPage(name: string) {
 // Mocks the re-read (GET) and the patch (PATCH) of PAGE_ID, recording both.
 function mockNotion(
   record: Record_,
-  opts: { name: string; rereadStatus?: number; patchStatus?: number; rereadDelayMs?: number },
+  opts: {
+    name: string;
+    url?: string | null;
+    rereadStatus?: number;
+    patchStatus?: number;
+    rereadDelayMs?: number;
+  },
 ) {
   network.use(
     http.get(PAGE_URL, async ({ request }) => {
@@ -80,7 +86,7 @@ function mockNotion(
           { status: opts.rereadStatus },
         );
       }
-      return HttpResponse.json(notionPage(opts.name));
+      return HttpResponse.json(notionPage(opts.name, opts.url === undefined ? X_STORED : opts.url));
     }),
     http.patch(PAGE_URL, async ({ request }) => {
       await record(request);
@@ -278,6 +284,80 @@ describe("enrich: Name guard (criterion 2)", () => {
 
     // M1: no Claude, no lookup, so nothing to write even though Name is unchanged.
     expect(seen.map((s) => s.method)).toEqual(["GET"]);
+  });
+});
+
+describe("enrich: URL guard and URL failures (PR 17 rulings)", () => {
+  it("a URL edited in Notion since create is left alone; the Name is still written", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("How to Get Rich (without getting lucky):"));
+    mockNotion(record, { name: `X post ${X_ID}`, url: "https://example.com/my-own-url" });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        [PROPS.name]: { title: [{ text: { content: "Naval: How to Get Rich (without getting lucky):" } }] },
+      },
+    });
+    expect(logs()[0]).toMatchObject({ event: "enrich", ok: true, patched: true });
+  });
+
+  it("a URL emptied in Notion since create is left alone too", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed('<a href="https://t.co/AbC123">pic.twitter.com/AbC123</a>'));
+    mockNotion(record, { name: `X post ${X_ID}`, url: null });
+
+    await runInWaitUntil(xJob());
+
+    // Media-only post (no Name) and an edited URL: nothing to write.
+    expect(seen.some((s) => s.method === "PATCH")).toBe(false);
+    expect(logs()).toEqual([expect.objectContaining({ event: "enrich", ok: true, patched: false })]);
+  });
+
+  it("a too-long oEmbed url (url_too_long) drops only the URL, never the Name", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    const long = `https://x.com/naval/status/${X_ID}?pad=${"a".repeat(2100)}`;
+    mockOembed(record, xOembed("How to Get Rich (without getting lucky):", long));
+    mockNotion(record, { name: `X post ${X_ID}` });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        [PROPS.name]: { title: [{ text: { content: "Naval: How to Get Rich (without getting lucky):" } }] },
+      },
+    });
+    expect(logs()).toEqual([expect.objectContaining({ event: "enrich", ok: true, patched: true })]);
+  });
+});
+
+describe("enrich: a >2000-char created title isn't read as an edit (PR 14 carry)", () => {
+  it("nameUnchanged compares a long client title truncated, as titleProp wrote it", () => {
+    const long = "Long client title ".repeat(150).trim(); // 2699 chars
+    const written = long.slice(0, 2000);
+    const job = pageJob({ clientTitle: long });
+    expect(nameUnchanged(job, written)).toBe(true);
+    expect(nameUnchanged(job, `${written} `)).toBe(true);
+    expect(nameUnchanged(job, "Something the user typed")).toBe(false);
+    expect(nameUnchanged(job, null)).toBe(false);
+  });
+
+  it("a row created with a 2599-char title (Name holds 2000) still gets the looked-up title", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    const long = "word ".repeat(520).trim(); // 2599 chars
+    htmlPage(ARTICLE, record, "<html><head><title>The Real Title</title></head></html>");
+    mockNotion(record, { name: long.slice(0, 2000) });
+
+    await runInWaitUntil(pageJob({ fallbackTitle: long }));
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { [PROPS.name]: { title: [{ text: { content: "The Real Title" } }] } },
+    });
   });
 });
 
