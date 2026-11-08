@@ -19,8 +19,9 @@ export type ClaudeOutput = { title: string; tags: string[] };
 // text (D-8). Four reviewed saves are held out of the examples on purpose, so the live
 // re-check measures the rules, not lookup. The 15 examples after the first 7 come from the
 // archive (SAT-40), chosen to show its contrasts: Startups over Growth, Mental Models over
-// Thinking, Product + Career, Mindfulness + Self-Improvement, and mostly one tag. None of
-// them are in the 40-row scoring set (scripts/eval-tags.ts).
+// Thinking, Product + Career, Mindfulness + Self-Improvement, and mostly one tag. "A Timeless
+// New Year" replaces an original example that turned out to be a scoring row. No example is
+// in the 40-row scoring set (scripts/eval-tags.ts).
 const PROMPT = `You clean up titles for links saved to a personal reading database and pick tags for them.
 
 Title rules:
@@ -58,7 +59,7 @@ Examples (title → tags):
 - How AI Agents & Claude Skills Work → AI
 - Paradigm Shifts and the Winner's Curse – Stratechery → Tech
 - Seven Phrases I Stole From Staff Engineers → Career
-- The Most Important Question of Your Life → Self-Improvement, Mindfulness
+- A Timeless New Year → Self-Improvement, Mindfulness
 - The Growth Maze vs The Idea Maze → Growth
 - The Startup Drake Equation → Startups
 - Lessons From My First Exit → Startups

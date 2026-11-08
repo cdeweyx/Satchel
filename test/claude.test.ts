@@ -209,7 +209,7 @@ describe("request shape", () => {
     ]);
   });
 
-  it("system prompt holds the seven original examples plus fifteen archive examples (SAT-40)", () => {
+  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40)", () => {
     expect(section(systemPrompt(TAGS), "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
@@ -217,7 +217,7 @@ describe("request shape", () => {
       "- How AI Agents & Claude Skills Work → AI",
       "- Paradigm Shifts and the Winner's Curse – Stratechery → Tech",
       "- Seven Phrases I Stole From Staff Engineers → Career",
-      "- The Most Important Question of Your Life → Self-Improvement, Mindfulness",
+      "- A Timeless New Year → Self-Improvement, Mindfulness",
       "- The Growth Maze vs The Idea Maze → Growth",
       "- The Startup Drake Equation → Startups",
       "- Lessons From My First Exit → Startups",
