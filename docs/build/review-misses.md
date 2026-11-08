@@ -1,0 +1,13 @@
+# Review misses (lands in docs/build/review-misses.md at close)
+- 2026-11-08 PR4 conformance: P2 README rotation lacks filtered `secret bulk` command (carried to close docs PR). Verdict Ready.
+- 2026-11-08 PR4 correctness: P2 deploy.sh accepts blank secret values (carried as fail-closed rule into SAT-4 router: empty SATCHEL_KEY never matches). Verdict Ready.
+- 2026-11-08 PR4 tally: conformance raised 1 (0 P0/P1); correctness raised 1 (0 P0/P1). No validators needed. Rules fired: none.
+- 2026-11-08 PR6 combined: 0 findings. Verdict Ready. Tally: combined 0 raised.
+- 2026-11-08 PR7 combined: 2 P2 (default 5 s timeout; URL guard only on writes), carried to SAT-6. Verdict Ready. Tally: combined 2 raised, 0 P0/P1.
+- 2026-11-08 PR8 combined: 0 findings. Verdict Ready. Tally: combined 0 raised.
+- 2026-11-08 PR9 combined: P1 OPTIONS /health missing (plan gap: D-4 names only OPTIONS /save, but D-13's Test button sends a keyed GET /health from an extension origin → preflight). Accepted, fixed in round 1 without a validator (lead checked D-13 text).
+- 2026-11-08 PR9 round 2 scoped: addressed, Ready. Tally PR9: combined 1 raised, 1 P1 confirmed (unique).
+- 2026-11-08 PR11 combined: 1 P2 (stale twitter.com fixture value). Verdict Ready. Notes for SAT-12: newlines in X titles; media-only posts.
+- 2026-11-08 PR12 combined: 0 findings (3 P2-level declines logged). Verdict Ready.
+- 2026-11-08 PR13 combined: 2 P2 (TikTok oEmbed dropped title upstream; abort test can't fail). Verdict Ready.
+- 2026-11-08 PR17 combined: 2 P2 (my widened media-only regex drops real colon-ending posts: a lead-ruling miss; a test that can't fail). Fixed in one round with the oEmbed id guard from the declined list. Tally: combined 2 raised, 0 P0/P1.
