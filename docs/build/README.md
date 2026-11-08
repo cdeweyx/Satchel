@@ -68,6 +68,25 @@ grep -E '^(NOTION_TOKEN|ANTHROPIC_API_KEY|SATCHEL_KEY|NOTION_DATABASE_ID|NOTION_
 
 Tests never use `.dev.vars`: `vitest.config.ts` binds fake values for all five keys.
 
+## Backlog backfill
+
+`scripts/backfill.ts` (SAT-32) runs the live rules over every non-trashed row: Claude's title (the `titled` shape with the current Name and the stripped URL), tags, and tracking params stripped from the URL. It imports `src/claude.ts`, `src/tags.ts`, `src/canonical.ts` and `src/fallback-title.ts` unchanged, so it always uses the live prompt and strip table.
+
+- Titles: a failed call or empty title keeps the old one. A change that's only quote or dash style or whitespace (’ vs ', — vs -) isn't a change; the user's characters stay. Placeholder titles (`@user on X`, `X post <id>`, a fallback title, empty, or the URL itself) are never sent to Claude and stay as they are.
+- URLs: only the query params `canonicalize` strips are removed. Path, trailing slash, fragment, `www`, host form and X author paths stay exactly as stored. Runs locally with Node, at most 3 Notion requests a second, no retries except waiting out a 429. Env comes from `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID` and `ANTHROPIC_API_KEY`, loaded with one filtered grep:
+
+```sh
+OUT=<workspace>/.context/backfill   # gitignored: these files are personal reading history
+tmp=$(mktemp) && chmod 600 "$tmp" && grep -E '^(NOTION_TOKEN|NOTION_DATA_SOURCE_ID|ANTHROPIC_API_KEY)=' ~/.config/satchel/secrets.env > "$tmp" \
+  && (set -a; . "$tmp"; set +a; npm run backfill -- --dry-run --out "$OUT"); rm -f "$tmp"
+```
+
+- `--dry-run --out <dir> [--tags=fill-empty|union]`: writes nothing to Notion. Writes `<dir>/plan.jsonl` (one line per row that changes: page id, archived flag, old and new title, tags and URL) and `<dir>/duplicates.json`, then prints 20 examples (title changes and tag fills, Inbox and Archived), 5 URL before/after examples, the counts (URL changes split by link kind: page, X, media), Claude's cost from token usage, and elapsed time.
+- `--tags=fill-empty` (default): tags already on a row stay exactly as they are; only rows with zero tags get Claude's 1 to 3. `--tags=union`: every row keeps all its tags and gains Claude's missing ones while it has fewer than 3.
+- Duplicates (rows whose URL, after the tracking strip, equals another row's) are listed in `duplicates.json` and left out of the plan: never merged, deleted or written.
+- `--apply <dir>/plan.jsonl --out <dir>`: writes only the rows in the plan and only the properties that change (Name, Tags by option id through `guardTags`, URL). It re-reads each page right before writing it: a row that already holds the plan's new values is reported as `already applied` (a resumed run); a row whose Name, Tags or URL changed since the dry run (or that was trashed) is skipped, logged as `skipped: changed since dry run`; both are counted in the summary. Otherwise the fresh values (Name also as its raw rich text) and what's about to be written go to `<dir>/rollback.jsonl` before the write. A plan tag that doesn't map to a Tags option stops the run before anything is written.
+- `--rollback <dir>/rollback.jsonl`: writes the logged old values back (the Name's rich text exactly, links and formatting included), newest line first. It re-reads each page first and skips, with a warning, any row where a field apply wrote no longer holds what apply wrote, so edits made after the apply survive.
+
 ## Gates (the build stops for the user here)
 
 - M0: SAT-7, after SAT-6. User runs `wrangler login` (or adds the Cloudflare token to the secrets file), confirms the Worker URL, opens `/health` in the work Chrome profile and checks Developer mode is available. On a Notion 404, stop and add the Satchel connection via ••• → Connections.
