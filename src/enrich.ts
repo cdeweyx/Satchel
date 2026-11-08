@@ -48,9 +48,18 @@ export function isNoTextX(lookup: LookupResult): boolean {
   return NO_POST_TEXT.test((lookup.description ?? "").replace(/\s+/g, " ").trim());
 }
 
+// SAT-42: an X post's Name is the post text alone, no author. lookupX's raw title is
+// `${author}: ${text}`, so the author prefix comes off here.
+function withoutXAuthor(lookup: LookupResult): string | null {
+  const isX = lookup.source === "x-oembed" || lookup.source === "x-twitterbot";
+  const prefix = `${lookup.author}: `;
+  if (isX && lookup.author && lookup.title?.startsWith(prefix)) return lookup.title.slice(prefix.length);
+  return lookup.title;
+}
+
 // The looked-up title for Name purposes, after R2 hygiene.
 function lookedUpTitle(lookup: LookupResult, storedUrl: string): string | null {
-  return isNoTextX(lookup) ? null : usableTitle(lookup.title, storedUrl);
+  return isNoTextX(lookup) ? null : usableTitle(withoutXAuthor(lookup), storedUrl);
 }
 
 // R4: the Name's plain text, joined across its rich-text runs. Null when the shape is off,
