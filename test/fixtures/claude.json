@@ -12,9 +12,9 @@
       },
       "message": "X post by Paul Graham (@paulg): \"The most common mistake founders make is building something nobody wants.\"\nURL: https://x.com/paulg/status/1002103360646823936",
       "content": [
-        { "type": "text", "text": "{\"title\":\"Paul Graham: Founders Often Build Things Nobody Wants\",\"tags\":[\"Startups\"]}" }
+        { "type": "text", "text": "{\"title\":\"Founders Often Build Things Nobody Wants\",\"tags\":[\"Startups\"]}" }
       ],
-      "expected": { "title": "Paul Graham: Founders Often Build Things Nobody Wants", "tags": ["Startups"] }
+      "expected": { "title": "Founders Often Build Things Nobody Wants", "tags": ["Startups"] }
     },
     {
       "name": "x post without handle",
@@ -26,9 +26,9 @@
       },
       "message": "X post by Naval: \"How to Get Rich (without getting lucky):\"\nURL: https://x.com/naval/status/1002103360646823936",
       "content": [
-        { "type": "text", "text": "{\"title\":\"Naval: How to Get Rich Without Getting Lucky\",\"tags\":[\"Economics\",\"Startups\"]}" }
+        { "type": "text", "text": "{\"title\":\"How to Get Rich Without Getting Lucky\",\"tags\":[\"Economics\",\"Startups\"]}" }
       ],
-      "expected": { "title": "Naval: How to Get Rich Without Getting Lucky", "tags": ["Economics", "Startups"] }
+      "expected": { "title": "How to Get Rich Without Getting Lucky", "tags": ["Economics", "Startups"] }
     },
     {
       "name": "titled with description",

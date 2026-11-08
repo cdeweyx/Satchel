@@ -216,11 +216,36 @@ describe("request shape", () => {
     ]);
   });
 
-  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40)", () => {
+  it("SAT-42: an X request's system prompt says the title is the gist in Title Case, no author name or handle", async () => {
+    const x = fixtures.cases.find((c) => c.input.shape === "x" && "handle" in c.input)!;
+    const { seen, record } = recorder();
+    network.use(
+      http.post(MESSAGES, async ({ request }) => {
+        await record(request);
+        return message(x.content);
+      }),
+    );
+
+    await cleanTitleAndTags(env, x.input, TAGS, signal());
+
+    const system = seen[0]!.body.system as string;
+    const titleRules = section(system, "Title rules:", "Tag rules:");
+    expect(titleRules.filter((l) => l.includes("X / Twitter"))).toEqual([
+      '- For X / Twitter posts (input starts with "X post by"), the title is just the gist of the post in Title Case: a plain 4 to 10 word summary, not a quote. Never put the author\'s name or handle in it.',
+    ]);
+    expect(system).not.toContain("Author: short gist");
+    expect(system).not.toMatch(/Author:/);
+    // The one example drawn from an X post (Naval's) carries no author.
+    const examples = section(system, "Examples (title → tags):", "Allowed tags: ");
+    expect(examples).toContain("- How to Get Rich Without Getting Lucky → Self-Improvement, Finance");
+    expect(examples.some((l) => l.startsWith("- Naval"))).toBe(false);
+  });
+
+  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40; SAT-42 drops Naval's author)", () => {
     expect(section(systemPrompt(TAGS), "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
-      "- Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
+      "- How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
       "- How AI Agents & Claude Skills Work → AI",
       "- Paradigm Shifts and the Winner's Curse – Stratechery → Tech",
       "- Seven Phrases I Stole From Staff Engineers → Career",
