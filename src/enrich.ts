@@ -29,8 +29,8 @@ import { isOnlyLinks } from "./title/x";
 // SAT-48: after the patch, one append writes the page body (previewBlock: the preview image or
 // a one-paragraph summary), with its own 3 s and only while the task is still before its
 // deadline. A failure logs `body_failed` and leaves the row as saved.
-// SAT-58: when the lookup gives no block and the link is a page, the block comes from the
-// preview the Chrome extension read off the open tab (the job's clientImage/Description).
+// SAT-58: for a page, an image beats text from either source: the lookup's image, then the
+// Chrome extension's (the job's clientImage), then the lookup's description, then the client's.
 
 const LOOKUP_STAGE_MS = 5000;
 const REREAD_MS = 3000;
@@ -249,10 +249,12 @@ async function writeBody(client: NotionClient, pageId: string, block: BodyBlock 
   }
 }
 
+// SAT-58, the user's ruling: grab an image if you can, else the text. For a page that's the
+// lookup's image, the client's image, the lookup's paragraph, the client's paragraph, nothing.
 function bodyBlock(job: EnrichJob, looked: LookupResult): BodyBlock | null {
   const own = previewBlock(looked);
-  if (own !== null || job.kind !== "page") return own;
-  return clientPreviewBlock(job.clientImage, job.clientDescription);
+  if (job.kind !== "page" || own?.type === "image") return own;
+  return clientPreviewBlock(job.clientImage, undefined) ?? own ?? clientPreviewBlock(undefined, job.clientDescription);
 }
 
 export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {}): Promise<void> {
@@ -333,8 +335,8 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
     }
 
     // SAT-48: from the lookup itself, so a client-title save still gets its preview.
-    // SAT-58: the lookup wins; a page it gave nothing for (a 429, no preview tags) falls back
-    // to the client's preview. X and media never do.
+    // SAT-58: a page falls back to the client's preview (a 429, no preview tags); X and media
+    // never do.
     stage = "unexpected";
     await writeBody(client, job.pageId, bodyBlock(job, looked), deadline.signal);
   } catch (err) {

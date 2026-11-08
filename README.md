@@ -48,7 +48,7 @@ Saving a URL that's already in the database updates its status, so saving it as 
 
 1. `POST /save` checks the `x-satchel-key` header, cleans the URL, and looks for an existing row.
 2. A new URL gets a new row (your title if you sent one, otherwise one built from the URL). A known URL gets its status updated. Then the Worker answers.
-3. In the background, it looks up the real title (the page's `<title>`, or oEmbed for X posts, YouTube, Spotify and similar), asks Claude Haiku for a clean title and tags, and updates the row once. A new row also gets the article's preview image (or, without one, a one-paragraph summary) in its page body when the page has one, so Notion's gallery cards show it. When the Worker can't read a page itself (Substack often turns it away), a save from Chrome falls back to the image or description the extension read from the open tab.
+3. In the background, it looks up the real title (the page's `<title>`, or oEmbed for X posts, YouTube, Spotify and similar), asks Claude Haiku for a clean title and tags, and updates the row once. A new row also gets the article's preview image (or, without one, a one-paragraph summary) in its page body when the page has one, so Notion's gallery cards show it. When the Worker can't read a page itself (Substack often turns it away), or finds no image on it, a save from Chrome falls back to the image or description the extension read from the open tab. An image always beats a summary.
 
 If Claude fails, the looked-up title still lands. If you've edited the title in Notion since saving, Satchel leaves it alone.
 

@@ -2624,7 +2624,9 @@ describe("SAT-58: a page the lookup gives nothing for falls back to the extensio
     expect(appends(seen)).toEqual([imageBody("https://cdn.example.com/own.jpg")]);
   });
 
-  it("a page whose lookup has only a description: the lookup's paragraph wins over a client image", async () => {
+  // Fix round 1 (the user's ruling: an image if you can, else the text) replaced "the lookup's
+  // paragraph wins over a client image": an image beats text from either source.
+  it("a page whose lookup has only a description: the client's image wins over the lookup's paragraph", async () => {
     captureLogs();
     const { seen, record } = recorder();
     htmlPage(
@@ -2635,7 +2637,23 @@ describe("SAT-58: a page the lookup gives nothing for falls back to the extensio
     mockNotion(record, { name: "How linear builds product · lennysnewsletter.com", url: POST });
     recordBody(record);
 
-    await runInWaitUntil(substackJob({ clientImage: COVER }));
+    await runInWaitUntil(substackJob({ clientImage: COVER, clientDescription: "Client text." }));
+
+    expect(appends(seen)).toEqual([imageBody(COVER)]);
+  });
+
+  it("no image from either source: the lookup's paragraph wins over the client's", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(
+      POST,
+      record,
+      '<html><head><title>How Linear Builds Product</title><meta property="og:description" content="The page says this."></head></html>',
+    );
+    mockNotion(record, { name: "How linear builds product · lennysnewsletter.com", url: POST });
+    recordBody(record);
+
+    await runInWaitUntil(substackJob({ clientDescription: "Client text." }));
 
     expect(appends(seen)).toEqual([paragraphBody("The page says this.")]);
   });

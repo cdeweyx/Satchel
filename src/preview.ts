@@ -2,8 +2,8 @@
 // article's preview image or, failing that, its summary. Pure: lookup result in, block out.
 // The background task appends it (enrich.ts); SAT-49's backfill imports it unchanged.
 // SAT-52: an X post with no photo gets its post text instead, links stripped.
-// SAT-58: a page whose lookup gives no block falls back to what the Chrome extension read
-// from the open tab (clientPreviewBlock).
+// SAT-58: a page whose lookup has no image falls back to what the Chrome extension read from
+// the open tab (clientPreviewBlock; the order is bodyBlock's in enrich.ts).
 
 import { type BodyBlock, imageBlock, paragraphBlock } from "./notion";
 import type { LookupResult } from "./title";
@@ -97,7 +97,7 @@ export function previewBlock(lookup: LookupResult): BodyBlock | null {
 
 /**
  * SAT-58: the block from what the Chrome extension read off the open tab (save.ts already
- * cleaned both), for a page whose own lookup gave no block. The same rules as a page lookup:
+ * cleaned both), for a page whose own lookup has no image. The same rules as a page lookup:
  * an image block for a usable image, else one summary paragraph of the description, else null.
  */
 export function clientPreviewBlock(image: string | undefined, description: string | undefined): BodyBlock | null {

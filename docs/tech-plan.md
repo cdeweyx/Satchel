@@ -234,7 +234,7 @@ Every Worker milestone runs typecheck and tests plus the check below.
 - Status: proposed (round 0, 2026-11-07).
 - Status: decided (user review, 2026-11-07).
 - Status: extended (SAT-48, 2026-11-08): after its one patch, the background task also writes the new row's page body once: one appended block, the preview image (page `og:image` or `twitter:image`, oEmbed `thumbnail_url`, an X post's own photo) or else the page's description as one paragraph of about 300 characters. Own 3 s, only before the 22 s deadline (so it ends by 25 s), no retry; a failure logs `body_failed` and leaves the row as saved.
-- Status: extended (SAT-58, 2026-11-08): when the lookup gives no block for a `page` link (Substack's 429, a page with no preview tags), the block comes from the Chrome extension's client preview (`image`, else `description` as the summary paragraph) sent with the save. The lookup still wins; X, media and Shortcut saves are unchanged.
+- Status: extended (SAT-58, 2026-11-08): a `page` link also uses the Chrome extension's client preview sent with the save (for Substack's 429, or a page with no preview tags). An image beats text from either source: the lookup's image, then the client `image`, then the lookup's description paragraph, then the client `description` paragraph, else nothing. X, media and Shortcut saves are unchanged.
 
 ### D-7 Generate the Shortcut from a script and sign on release
 
