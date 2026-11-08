@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "check": "wrangler types --strict-vars=false && tsc --noEmit && vitest run",
+    "check": "python3 -I shortcut/assert-template.py && wrangler types --strict-vars=false && tsc --noEmit && vitest run",
     "types": "wrangler types --strict-vars=false",
     "dev": "wrangler dev",
     "deploy": "scripts/deploy.sh",
