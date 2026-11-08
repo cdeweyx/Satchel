@@ -24,7 +24,7 @@ You need a Mac with the Shortcuts app, a network connection (signing needs it), 
 
 3. Fill in your Worker URL and key, one of two ways:
 
-   - **Answer the questions on Add Shortcut.** The first asks for your Worker URL: the base only, like `https://satchel.<you>.workers.dev`, without `/save`. The second asks for your `SATCHEL_KEY`. Then tap **Add Shortcut**.
+   - **Answer the questions on Add Shortcut.** The first asks for your Worker URL: the base only, like `https://satchel.<you>.workers.dev`, without `/save`. The second asks for your Satchel key (`SATCHEL_KEY`). Then tap **Add Shortcut**.
    - **Or edit the Shortcut afterward.** If the questions don't show, or you skipped them, add the Shortcut, then open it in the Shortcuts app to edit. The first Text box holds the Worker URL and the second holds the key. Replace whatever's in each (a placeholder like `WORKER_URL_PLACEHOLDER`, or nothing) with your own values.
 
 4. Check it. In Safari, tap Share, then **Satchel**, then pick **Send to inbox**. You should see "Saved ✓" and a new row in Notion. A wrong or empty key shows "Satchel: not saved" with `unauthorized`, so fix the second Text box if you see that.

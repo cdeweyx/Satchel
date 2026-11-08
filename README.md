@@ -163,7 +163,7 @@ Other errors are JSON too: 401 `unauthorized` (missing or wrong key), 400 `inval
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick the `extension/` folder in your clone.
 3. Open Satchel's options, any of three ways: right-click the Satchel toolbar icon, then **Options**; open the popup and pick **Set up Satchel**; or on `chrome://extensions`, click **Details** on Satchel, then **Extension options**. If you don't see the icon, pin it from the puzzle-piece menu.
-4. Fill in **Worker URL** (`https://satchel.<you>.workers.dev`) and **Save key** (your `SATCHEL_KEY`).
+4. Fill in **Worker URL** (`https://satchel.<you>.workers.dev`) and **Satchel key** (your `SATCHEL_KEY`).
 5. Click **Save**, then **Test**. It should list Notion, Claude and X oEmbed as `ok`. "Key rejected" means the key doesn't match.
 
 Settings stay in that Chrome profile and never sync, so repeat these steps in each profile you save from.
