@@ -1,4 +1,26 @@
-# Satchel
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/mark-dark.svg">
+    <img src="brand/mark.svg" width="300" alt="Satchel">
+  </picture>
+</p>
+
+<p align="center">One tap saves a link to Notion. Claude tidies the title and tags after.</p>
+
+<p align="center">
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#deploy-your-own">Deploy your own</a> ·
+  <a href="#install-the-chrome-extension">Chrome extension</a> ·
+  <a href="#install-the-iphone-shortcut">iPhone Shortcut</a> ·
+  <a href="#develop">Develop</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/readme/hero-dark-saved.png">
+    <img src="brand/readme/hero-light-saved.png" width="720" alt="The Satchel popup open in Chrome on Paul Graham's essay How to Do Great Work, with Mark as archived pressed and stamped SAVED">
+  </picture>
+</p>
 
 Save links to a Notion database in one tap. Satchel is a tiny Cloudflare Worker you deploy yourself. You send it a URL and how you want it filed (send to inbox, mark as archived, or favorite), and it writes the row to Notion right away. A couple of seconds later, Claude cleans up the title and picks a few tags from the ones you already use.
 
