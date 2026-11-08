@@ -5,6 +5,7 @@ import { enrich } from "./enrich";
 import { fallbackTitle, isMissingTitle } from "./fallback-title";
 import { logEvent } from "./log";
 import { NotionError, type NotionPage, type Properties, checkboxProp, notion, titleProp, urlProp } from "./notion";
+import { usableImage } from "./preview";
 
 // POST /save (D-1, D-2, D-10). The response path is one dedupe query plus one create or
 // patch, nothing else. Enrich runs in waitUntil, and only after a create.
@@ -58,6 +59,21 @@ function statusProps(status: SaveRequest["status"]): Properties {
   };
 }
 
+// SAT-58: the client's preview fields are untrusted. Anything that isn't a usable value is
+// dropped silently, so an old Shortcut or extension (or a bad value) still saves.
+const MAX_DESCRIPTION = 1000; // code points; the card shows about 300 (SUMMARY_CHARS)
+
+function clientImage(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 2000) return undefined;
+  return usableImage(value) ?? undefined;
+}
+
+function clientDescription(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const clean = Array.from(value.replace(/\s+/g, " ").trim()).slice(0, MAX_DESCRIPTION).join("").trim();
+  return clean || undefined;
+}
+
 // The router authenticated and validated the body on a clone; this reads the original once.
 async function save(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const started = Date.now();
@@ -106,6 +122,8 @@ async function save(req: Request, env: Env, ctx: ExecutionContext): Promise<Resp
       kind: c.kind,
       clientTitle,
       fallbackTitle: fallback,
+      clientImage: clientImage(body.image),
+      clientDescription: clientDescription(body.description),
     };
     ctx.waitUntil(enrich(job, env));
     logEvent("save", { action: "create", kind: c.kind, ms: Date.now() - started });

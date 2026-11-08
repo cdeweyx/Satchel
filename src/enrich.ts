@@ -14,7 +14,7 @@ import {
   truncateText,
   urlProp,
 } from "./notion";
-import { previewBlock } from "./preview";
+import { clientPreviewBlock, previewBlock } from "./preview";
 import { type TagOptions, getTagOptions, guardTags, invalidateTagCache } from "./tags";
 import { type LookupResult, lookupTitle } from "./title";
 import { isOnlyLinks } from "./title/x";
@@ -29,6 +29,8 @@ import { isOnlyLinks } from "./title/x";
 // SAT-48: after the patch, one append writes the page body (previewBlock: the preview image or
 // a one-paragraph summary), with its own 3 s and only while the task is still before its
 // deadline. A failure logs `body_failed` and leaves the row as saved.
+// SAT-58: when the lookup gives no block and the link is a page, the block comes from the
+// preview the Chrome extension read off the open tab (the job's clientImage/Description).
 
 const LOOKUP_STAGE_MS = 5000;
 const REREAD_MS = 3000;
@@ -247,6 +249,12 @@ async function writeBody(client: NotionClient, pageId: string, block: BodyBlock 
   }
 }
 
+function bodyBlock(job: EnrichJob, looked: LookupResult): BodyBlock | null {
+  const own = previewBlock(looked);
+  if (own !== null || job.kind !== "page") return own;
+  return clientPreviewBlock(job.clientImage, job.clientDescription);
+}
+
 export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {}): Promise<void> {
   const start = Date.now();
   // One signal for the whole task, fired deadlineMs after start. Only Claude listens to it.
@@ -325,8 +333,10 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
     }
 
     // SAT-48: from the lookup itself, so a client-title save still gets its preview.
+    // SAT-58: the lookup wins; a page it gave nothing for (a 429, no preview tags) falls back
+    // to the client's preview. X and media never do.
     stage = "unexpected";
-    await writeBody(client, job.pageId, previewBlock(looked), deadline.signal);
+    await writeBody(client, job.pageId, bodyBlock(job, looked), deadline.signal);
   } catch (err) {
     try {
       failed(err instanceof NotionError ? stage : "unexpected", job?.pageId, err);
