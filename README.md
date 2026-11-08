@@ -32,8 +32,11 @@ Merged on `main`:
 - Notion client over plain `fetch`, with no retry (SAT-3).
 - Fallback titles built from the URL (SAT-5).
 - Router with key auth, body validation, CORS preflight on `/save` and `/health`, and JSON errors for every code (SAT-4).
+- Save handler: dedupe query, then create or patch, with enrich handed to `waitUntil` (SAT-6).
 
-Left in M0: the `/save` handler that writes the row (SAT-6), then the first deploy and real-database check (SAT-7). Today `POST /save` checks the key and body, then returns 500 `internal` from the stub handler. `GET /health` answers keyless liveness.
+`POST /save` dedupes and creates or patches rows (tested against mocked Notion); the first real-database check is SAT-7. A Notion error returns 502 `notion_<code>` with no retry. Enrich is still a no-op stub, so new rows keep their client or fallback title. `GET /health` answers keyless liveness.
+
+Left in M0: the first deploy and real-database check (SAT-7).
 
 Roadmap:
 
@@ -51,7 +54,7 @@ Roadmap:
 ## Repo layout
 
 - `src/index.ts`: the Worker entry and router. Checks the `x-satchel-key` header in constant time, validates the save body, answers CORS preflights and 405s.
-- `src/save.ts`: `POST /save` (stub until SAT-6).
+- `src/save.ts`: `POST /save`: dedupe query, then create or patch.
 - `src/enrich.ts`: the background title lookup and Claude call (stub until M1 / M2).
 - `src/health.ts`: `GET /health` (keyless liveness today; keyed probes in M2).
 - `src/contract.ts`: request and response types, error codes, and `json()`, which builds every response.
