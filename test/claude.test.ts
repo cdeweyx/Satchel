@@ -154,15 +154,19 @@ describe("request shape", () => {
     );
     expect(prompt).toContain("- Prefer the most specific tag that fits.");
     expect(prompt).toContain(
-      "- Use a broad tag (Tech, Thinking, Creativity, Growth, Mindset, Business, Productivity, Social Media) only when the piece is about that broad topic itself.",
+      "- Use a broad tag (Tech, Thinking, Growth) only when the piece is about that broad topic itself.",
     );
     expect(prompt).toContain("- Never add Tech alongside AI or Engineering for an AI or engineering piece.");
-    expect(prompt).toContain("- Never tag by source or format: a link from X isn't Social Media, a video isn't Video.");
+    expect(prompt).toContain("- Never tag by source or format: a link from X isn't about social media, a video isn't Video.");
+    // Retired tags (2026-11-08) are never named in the prompt's own text.
+    for (const retired of ["Cool", "Creativity", "Mindset", "Business", "Productivity", "Social Media"]) {
+      expect(systemPrompt([])).not.toContain(retired);
+    }
     expect(prompt).toContain("Never invent a tag. If nothing fits, pick the single closest one.");
     expect(prompt).not.toContain("Pick 1 to 3 tags");
   });
 
-  it("system prompt gives a one-line meaning for exactly the ten archive tags", () => {
+  it("system prompt gives a one-line meaning for exactly these eleven tags (Cool retired, Projects and History added)", () => {
     expect(section(systemPrompt(TAGS), "What some tags mean here:", "Examples (title → tags):")).toEqual([
       "What some tags mean here:",
       "- Tech: the business and strategy of the tech industry, not anything technical.",
@@ -173,8 +177,9 @@ describe("request shape", () => {
       "- Thinking: essays about ideas and how to think.",
       "- Growth: user and demand growth, not personal growth.",
       "- Trends: predictions and what's next.",
-      "- Cool: fun personal favorites, year-in-review lists.",
       "- Culture: cultural commentary.",
+      "- Projects: things people built (apps, tools, side projects).",
+      "- History: how things came to be, histories of objects, places and technology.",
     ]);
   });
 

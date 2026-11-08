@@ -23,11 +23,13 @@ export const DEADLINE_MS = 22_000;
 
 export type EnrichOptions = { deadlineMs?: number };
 
-// A media-only X post, tested on the post text alone (never the `author: ` title, so a
-// real post ending in "...: pic.twitter.com/x" keeps its title). oEmbed shows the image as
-// a pic.twitter.com link; Twitterbot's og:description can be just the t.co link.
-const MEDIA_ONLY_OEMBED = /^pic\.twitter\.com\/\S+$/;
-const MEDIA_ONLY_TWITTERBOT = /^(?:pic\.twitter\.com\/\S+|https:\/\/t\.co\/\S+)$/;
+// An X post with no text of its own: only media or links (SAT-12, SAT-37). Tested on the
+// post text alone (never the `author: ` title, so a real post ending in "...: pic.twitter.com/x"
+// keeps its title). A link reads as X shows it: a full URL (t.co or any other, Twitterbot's
+// og:description), a pic.twitter.com media link, or a display URL (host plus a path, maybe
+// cut with "…"). A display URL needs the path, so "Node.js", "Node.js…" and "box.com" stay text.
+const LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*)`;
+const NO_POST_TEXT = new RegExp(`^${LINK}(?: ${LINK})*$`, "i");
 
 type Stage = "schema" | "reread" | "patch";
 
@@ -40,17 +42,15 @@ export function usableTitle(title: string | null | undefined, storedUrl: string)
   return clean;
 }
 
-// R2: an X lookup whose post text is only the media link has no title worth writing.
-export function isMediaOnlyX(lookup: LookupResult): boolean {
-  const text = (lookup.description ?? "").replace(/\s+/g, " ").trim();
-  if (lookup.source === "x-oembed") return MEDIA_ONLY_OEMBED.test(text);
-  if (lookup.source === "x-twitterbot") return MEDIA_ONLY_TWITTERBOT.test(text);
-  return false;
+// R2: an X lookup whose post text is only media or links has no title worth writing.
+export function isNoTextX(lookup: LookupResult): boolean {
+  if (lookup.source !== "x-oembed" && lookup.source !== "x-twitterbot") return false;
+  return NO_POST_TEXT.test((lookup.description ?? "").replace(/\s+/g, " ").trim());
 }
 
 // The looked-up title for Name purposes, after R2 hygiene.
 function lookedUpTitle(lookup: LookupResult, storedUrl: string): string | null {
-  return isMediaOnlyX(lookup) ? null : usableTitle(lookup.title, storedUrl);
+  return isNoTextX(lookup) ? null : usableTitle(lookup.title, storedUrl);
 }
 
 // R4: the Name's plain text, joined across its rich-text runs. Null when the shape is off,
@@ -130,6 +130,7 @@ type ClaudeStage = {
   title: string | null;
   tagNames: string[];
   claude: boolean; // Claude answered with usable output
+  reason?: "no_text_x"; // why Claude was skipped on purpose, logged on `enrich`
 };
 
 const ABANDONED = Symbol("abandoned");
@@ -153,6 +154,9 @@ async function untilAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | ty
 // failure logs `enrich_failed{stage: "schema"}` and skips Claude; an empty option list skips
 // Claude (a zero-length enum would 400, R4); a Claude failure was already logged by claude.ts;
 // the deadline logs `enrich_deadline`. Every path goes on to the re-read and the patch.
+// SAT-37: an X post with no text of its own (and no client title, which skips lookup) skips
+// this stage outright. The stored URL is `x.com/i/status/<id>`, so Claude would have nothing
+// to go on and would invent a contentless Name and guess tags. The fallback Name stays.
 async function claudeStage(
   job: EnrichJob,
   lookup: LookupResult,
@@ -161,6 +165,7 @@ async function claudeStage(
   start: number,
 ): Promise<ClaudeStage> {
   const none = (options: TagOptions | null): ClaudeStage => ({ options, title: null, tagNames: [], claude: false });
+  if (isNoTextX(lookup)) return { ...none(null), reason: "no_text_x" };
 
   let options: TagOptions;
   try {
@@ -242,6 +247,7 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
         ms: Date.now() - start,
         patched,
         claude: claude.claude,
+        ...(claude.reason ? { reason: claude.reason } : {}),
         tags: patched ? tags.length : 0,
       });
 

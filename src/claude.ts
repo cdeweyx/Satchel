@@ -31,9 +31,9 @@ Title rules:
 Tag rules:
 - Pick one tag by default. Add a second only when the piece is substantially about that topic too. About half of saves get one tag, most of the rest two; three is rare (about 1 in 10). Never more than 3.
 - Prefer the most specific tag that fits.
-- Use a broad tag (Tech, Thinking, Creativity, Growth, Mindset, Business, Productivity, Social Media) only when the piece is about that broad topic itself.
+- Use a broad tag (Tech, Thinking, Growth) only when the piece is about that broad topic itself.
 - Never add Tech alongside AI or Engineering for an AI or engineering piece.
-- Never tag by source or format: a link from X isn't Social Media, a video isn't Video.
+- Never tag by source or format: a link from X isn't about social media, a video isn't Video.
 - Use tags from the allowed list only. Never invent a tag. If nothing fits, pick the single closest one.
 
 What some tags mean here:
@@ -45,8 +45,9 @@ What some tags mean here:
 - Thinking: essays about ideas and how to think.
 - Growth: user and demand growth, not personal growth.
 - Trends: predictions and what's next.
-- Cool: fun personal favorites, year-in-review lists.
 - Culture: cultural commentary.
+- Projects: things people built (apps, tools, side projects).
+- History: how things came to be, histories of objects, places and technology.
 
 Examples (title → tags):
 - The Art of Vibe Design → Design
