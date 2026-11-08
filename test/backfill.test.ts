@@ -14,6 +14,14 @@ import {
   stripTracking,
 } from "../scripts/backfill";
 import { canonicalize } from "../src/canonical";
+// The script imports src/ lazily (its CLI needs that). Load the same modules here, at file
+// import, so their one-time transform (the Anthropic SDK above all) isn't charged to the
+// first test's 5 s budget, where it took up to 1.3 s on an idle machine.
+import "../src/claude";
+import "../src/config";
+import "../src/fallback-title";
+import "../src/notion";
+import "../src/tags";
 import { network } from "./network";
 
 // Every Notion and Anthropic request below is answered by MSW (test/network.ts); anything
@@ -808,7 +816,7 @@ describe("backfill rollback", () => {
 });
 
 describe("backfill Notion pacing", () => {
-  it("keeps 334 ms between requests and waits out a 429, retrying nothing else", async () => {
+  it("keeps 334 ms between requests by default and waits out a 429, retrying nothing else", async () => {
     const out = tmpDir();
     const logPath = `${out}/rollback.jsonl`;
     const entries: RollbackEntry[] = ["p-1", "p-2", "p-3"].map((pageId) => ({
@@ -855,13 +863,13 @@ describe("backfill Notion pacing", () => {
       }),
     );
     const d = deps({
-      minIntervalMs: 334,
       now: () => clock,
       sleep: async (ms) => {
         slept.push(ms);
         clock += ms;
       },
     });
+    delete d.minIntervalMs; // the default, as the CLI runs it
 
     // Newest first: p-3, p-2 (429, waited out), p-1 (409: thrown, never retried).
     await expect(rollback(d, logPath)).rejects.toThrow("409 conflict_error");
@@ -869,6 +877,136 @@ describe("backfill Notion pacing", () => {
     expect(starts).toHaveLength(8);
     for (let i = 1; i < starts.length; i++) expect(starts[i]! - starts[i - 1]!).toBeGreaterThanOrEqual(334);
     expect(slept).toContain(2000);
+  });
+});
+
+describe("backfill Notion pacing on the real clock", () => {
+  it("spaces request starts by an injected 20 ms interval with real timers", async () => {
+    const out = tmpDir();
+    const entries: RollbackEntry[] = ["p-1", "p-2", "p-3"].map((pageId) => ({
+      pageId,
+      fields: ["title"],
+      title: `t ${pageId}`,
+      tags: [],
+      url: null,
+      written: { title: `new ${pageId}`, tags: [], url: null },
+    }));
+    writeFileSync(`${out}/rollback.jsonl`, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const pages: Fixture[] = entries.map((e) => ({ id: e.pageId, title: e.written!.title, url: null, tags: [], archived: true }));
+    const { notion } = mock([], () => undefined, pages);
+
+    // Each start stamped by the clock the script reads, when Notion receives it.
+    const starts: number[] = [];
+    const stamp = () => starts.push(Date.now());
+    network.use(
+      http.get(DS, () => {
+        stamp();
+        return HttpResponse.json({ object: "data_source", properties: { Tags: { type: "multi_select", multi_select: { options: OPTIONS } } } });
+      }),
+      http.get(`${NOTION}/pages/:id`, ({ params }) => {
+        stamp();
+        return HttpResponse.json(page(pages.find((p) => p.id === params.id)!));
+      }),
+      http.patch(`${NOTION}/pages/:id`, ({ params }) => {
+        stamp();
+        notion.push({ method: "PATCH", url: String(params.id), body: null });
+        return HttpResponse.json({ object: "page", id: params.id, properties: {} });
+      }),
+    );
+    const d = deps({ minIntervalMs: 20, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) });
+    await rollback(d, `${out}/rollback.jsonl`);
+
+    expect(d.lines).toContain("Rows restored: 3");
+    // schema, then GET + PATCH for each of the 3 rows
+    expect(starts).toHaveLength(7);
+    for (let i = 1; i < starts.length; i++) expect(starts[i]! - starts[i - 1]!).toBeGreaterThanOrEqual(20);
+  });
+});
+
+describe("backfill stops on a Notion error", () => {
+  const PLAN: PlanEntry[] = ["p-1", "p-2", "p-3"].map((pageId) => ({
+    pageId,
+    archived: true,
+    oldTitle: `old ${pageId}`,
+    newTitle: `New ${pageId}`,
+    oldTags: [],
+    newTags: [],
+    oldUrl: null,
+    newUrl: null,
+  }));
+  const PAGES: Fixture[] = PLAN.map((e) => ({ id: e.pageId, title: e.oldTitle, url: null, tags: [], archived: true }));
+  const bad502 = () => new HttpResponse("<html>502 Bad Gateway</html>", { status: 502 });
+
+  it("apply: a 502 on a page GET mid-plan rejects, prints the rows written so far, writes nothing after", async () => {
+    const out = tmpDir();
+    writeFileSync(`${out}/plan.jsonl`, PLAN.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const { notion, current } = mock([], () => undefined, PAGES);
+    network.use(
+      http.get(`${NOTION}/pages/p-2`, ({ request }) => {
+        notion.push({ method: "GET", url: request.url, body: null });
+        return bad502();
+      }),
+    );
+
+    const d = deps();
+    await expect(run(["--apply", `${out}/plan.jsonl`, "--out", out], d)).rejects.toThrow(
+      "Notion GET /pages/p-2 failed: 502 http_502",
+    );
+
+    expect(notion.filter((r) => r.url.includes("/pages/")).map((r) => `${r.method} ${r.url.split("/").pop()}`)).toEqual([
+      "GET p-1",
+      "PATCH p-1",
+      "GET p-2",
+    ]);
+    expect(current.get("p-1")!.title).toBe("New p-1");
+    expect(current.get("p-3")!.title).toBe("old p-3");
+    expect(d.lines).toContain("Apply stopped before the end of the plan");
+    expect(d.lines).toContain("Rows written: 1 of 3 in the plan");
+    expect(readJsonl<RollbackEntry>(`${out}/rollback.jsonl`).map((e) => e.pageId)).toEqual(["p-1"]);
+  });
+
+  it("rollback: a 502 on a page GET mid-log rejects and prints the rows restored so far", async () => {
+    const out = tmpDir();
+    const log: RollbackEntry[] = PLAN.map((e) => ({
+      pageId: e.pageId,
+      fields: ["title"],
+      title: e.oldTitle,
+      tags: [],
+      url: null,
+      written: { title: e.newTitle, tags: [], url: null },
+    }));
+    writeFileSync(`${out}/rollback.jsonl`, log.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    const after = PAGES.map((p) => ({ ...p, title: `New ${p.id}` }));
+    const { notion, current } = mock([], () => undefined, after);
+    network.use(http.get(`${NOTION}/pages/p-2`, bad502));
+
+    const d = deps();
+    await expect(run(["--rollback", `${out}/rollback.jsonl`], d)).rejects.toThrow("502 http_502");
+
+    // Newest first: p-3 restored, p-2's read fails, p-1 never touched.
+    expect(notion.filter((r) => r.method === "PATCH").map((r) => r.url.split("/").pop())).toEqual(["p-3"]);
+    expect(current.get("p-3")!.title).toBe("old p-3");
+    expect(current.get("p-1")!.title).toBe("New p-1");
+    expect(d.lines).toContain("Rollback stopped before the end of the log");
+    expect(d.lines).toContain("Rows restored: 1");
+  });
+
+  it("dry run: a 502 on the second query page rejects, writes no plan, says nothing was written", async () => {
+    const out = `${tmpDir()}/run`;
+    const { notion } = mock(ROWS, fixtureClaude);
+    network.use(
+      http.post(`${DS}/query`, async ({ request }) => {
+        const body = (await request.json()) as { start_cursor?: string };
+        if (body.start_cursor === "cursor-2") return bad502();
+        return HttpResponse.json({ object: "list", results: ROWS.slice(0, 2).map(page), has_more: true, next_cursor: "cursor-2" });
+      }),
+    );
+
+    const d = deps();
+    await expect(run(["--dry-run", "--out", out], d)).rejects.toThrow("Notion POST /data_sources/test-data-source-id/query failed: 502 http_502");
+    expect(notion.some((r) => r.method === "PATCH")).toBe(false);
+    expect(existsSync(`${out}/plan.jsonl`)).toBe(false);
+    expect(d.lines).toEqual(["Dry run stopped: nothing written to Notion, no plan written"]);
   });
 });
 
