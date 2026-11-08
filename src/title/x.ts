@@ -5,7 +5,7 @@
 // Never throws: any failure (network, abort, timeout, bad status, wrong content type,
 // unexpected shape) returns null, because the save path relies on it (SAT-12).
 
-import { isXPostMedia } from "../preview";
+import { X_LINK, isXPostMedia } from "../preview";
 
 export type XTitle = {
   title: string;
@@ -95,11 +95,11 @@ function handleFromAuthorUrl(authorUrl: unknown): string | undefined {
 
 // An X post with no text of its own: only media or links (SAT-12, SAT-37). Tested on the
 // post text alone (never the `author: ` title, so a real post ending in "...: pic.twitter.com/x"
-// keeps its title). A link reads as X shows it: a full URL (t.co or any other, Twitterbot's
-// og:description), a pic.twitter.com media link, or a display URL (host plus a path, maybe
-// cut with "…"). A display URL needs the path, so "Node.js", "Node.js…" and "box.com" stay text.
-const LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*)`;
-const NO_POST_TEXT = new RegExp(`^${LINK}(?: ${LINK})*$`, "i");
+// keeps its title). A link reads as X shows it (X_LINK in preview.ts, shared with SAT-52's
+// page-body text): a full URL (t.co or any other, Twitterbot's og:description), a
+// pic.twitter.com media link, or a display URL (host plus a path, maybe cut with "…"). A
+// display URL needs the path, so "Node.js", "Node.js…" and "box.com" stay text.
+const NO_POST_TEXT = new RegExp(`^${X_LINK}(?: ${X_LINK})*$`, "i");
 
 export function isOnlyLinks(text: string | undefined): boolean {
   return NO_POST_TEXT.test((text ?? "").replace(/\s+/g, " ").trim());

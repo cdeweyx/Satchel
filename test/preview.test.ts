@@ -32,12 +32,62 @@ describe("SAT-48 previewBlock: lookup result to the one block, or none", () => {
     expect(previewBlock(page({ image: long }))).toBeNull();
   });
 
-  it("X posts get an image or nothing, never a paragraph of post text", () => {
-    const x: LookupResult = { title: "Naval: hi", description: "hi", source: "x-oembed", bytesRead: 1 };
-    expect(previewBlock(x)).toBeNull();
-    expect(previewBlock({ ...x, source: "x-twitterbot" })).toBeNull();
+  // SAT-52 replaced SAT-48's "X posts get an image or nothing" test: Conor ruled a text-only
+  // post shows its post text.
+  it("SAT-52: an X post's photo wins; with no photo its post text, links stripped, is one paragraph", () => {
+    const x: LookupResult = {
+      title: "Naval: Read https://t.co/AbC123  this pic.twitter.com/XyZ",
+      description: "Read https://t.co/AbC123  this\npic.twitter.com/XyZ",
+      source: "x-oembed",
+      bytesRead: 1,
+    };
+    expect(previewBlock(x)).toEqual(paragraph("Read this"));
+    expect(previewBlock({ ...x, source: "x-twitterbot" })).toEqual(paragraph("Read this"));
     expect(previewBlock({ ...x, image: "https://pbs.twimg.com/media/A.jpg" })).toEqual(
       image("https://pbs.twimg.com/media/A.jpg"),
+    );
+  });
+
+  it("SAT-52: an X post with only links, or no text, gets nothing", () => {
+    const x = (description?: string): LookupResult => ({
+      title: `X: ${description}`,
+      ...(description === undefined ? {} : { description }),
+      source: "x-oembed",
+      bytesRead: 1,
+    });
+    expect(previewBlock(x("https://t.co/Lv1eB0x"))).toBeNull();
+    expect(previewBlock(x("pic.twitter.com/AbC123"))).toBeNull();
+    expect(previewBlock(x("box.com/blog/ai-agents-a… pic.twitter.com/b"))).toBeNull();
+    expect(previewBlock(x("  "))).toBeNull();
+    // Review fix: what's left after the links has no letter or digit.
+    expect(previewBlock(x("— https://t.co/a"))).toBeNull();
+    expect(previewBlock(x("👇 https://t.co/a"))).toBeNull();
+    expect(previewBlock(x("👇 2 https://t.co/a"))).toEqual(paragraph("👇 2"));
+    expect(previewBlock(x("Ça va https://t.co/a"))).toEqual(paragraph("Ça va"));
+    expect(previewBlock(x())).toBeNull();
+  });
+
+  it("SAT-52: X text keeps words that only look like hosts, and is cut to about 300 characters", () => {
+    const x = (description: string): LookupResult => ({ title: "t", description, source: "x-oembed", bytesRead: 1 });
+    expect(previewBlock(x("Node.js and box.com are text; example.com/path isn't"))).toEqual(
+      paragraph("Node.js and box.com are text; isn't"),
+    );
+    const long = `${"word ".repeat(70)}https://t.co/z`;
+    expect(previewBlock(x(long))).toEqual(paragraph(`${"word ".repeat(60).trimEnd()}…`));
+  });
+
+  it("SAT-52: an X Article with no image is a paragraph of its article title; with an image, the image", () => {
+    const article: LookupResult = {
+      title: "Aaron Levie: The never-ending last mile of work",
+      description: "The never-ending last mile of work",
+      author: "Aaron Levie",
+      source: "x-oembed",
+      article: true,
+      bytesRead: 1,
+    };
+    expect(previewBlock(article)).toEqual(paragraph("The never-ending last mile of work"));
+    expect(previewBlock({ ...article, image: "https://pbs.twimg.com/media/B.jpg" })).toEqual(
+      image("https://pbs.twimg.com/media/B.jpg"),
     );
   });
 

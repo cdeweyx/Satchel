@@ -230,9 +230,11 @@ export function notion(env: Env) {
       return call<NotionPage>("GET", `/pages/${encodeURIComponent(id)}`, undefined, opts);
     },
 
-    // SAT-48: appends one block to the end of a page's body (no `position`, so it lands last).
+    // SAT-48: appends one block to a page's body. SAT-52: at the start, so it's the first block
+    // (Notion-Version 2026-03-11 replaced the old `after` param with `position`).
     appendBlock(pageId: string, block: BodyBlock, opts?: CallOptions): Promise<unknown> {
-      return call<unknown>("PATCH", `/blocks/${encodeURIComponent(pageId)}/children`, { children: [block] }, opts);
+      const body = { children: [block], position: { type: "start" } };
+      return call<unknown>("PATCH", `/blocks/${encodeURIComponent(pageId)}/children`, body, opts);
     },
   };
 }

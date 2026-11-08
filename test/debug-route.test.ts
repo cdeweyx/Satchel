@@ -3,6 +3,8 @@ import { env } from "cloudflare:workers";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
+import { previewBlock } from "../src/preview";
+import type { LookupResult } from "../src/title";
 import { network } from "./network";
 
 // SAT-11: GET /debug/title?url= through worker.fetch. Outbound lookups are mocked with MSW;
@@ -219,5 +221,38 @@ describe("criterion 2: JSON with ok on success and on lookup failure", () => {
     expect(typeof ms).toBe("number");
     expect(lines.join("\n")).not.toContain(KEY);
     expect(lines.join("\n")).not.toContain("example.com");
+  });
+});
+
+// SAT-52: a later lead script calls the deployed /debug/title and feeds its JSON to
+// previewBlock, so the JSON must carry what previewBlock needs for an X post's text.
+describe("SAT-52: /debug/title's JSON is enough for previewBlock", () => {
+  it("an X text post: `source` and the post text in `description`, which previewBlock turns into the paragraph", async () => {
+    const oembed = JSON.stringify({
+      url: `https://x.com/naval/status/${X_ID}`,
+      author_name: "Naval",
+      author_url: "https://twitter.com/naval",
+      html:
+        '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">How to Get Rich <a href="https://t.co/AbC123">https://t.co/AbC123</a></p>' +
+        "&mdash; Naval (@naval)</blockquote>",
+      type: "rich",
+      version: "1.0",
+    });
+    network.use(
+      http.get(OEMBED, () => new HttpResponse(oembed, { headers: { "content-type": "application/json; charset=utf-8" } })),
+    );
+
+    const body = await expectJson(await call(debug(`https://x.com/naval/status/${X_ID}`)), 200);
+
+    expect(body).toMatchObject({
+      source: "x-oembed",
+      title: "Naval: How to Get Rich https://t.co/AbC123",
+      description: "How to Get Rich https://t.co/AbC123",
+    });
+    expect(body).not.toHaveProperty("image");
+    expect(previewBlock(body as unknown as LookupResult)).toEqual({
+      type: "paragraph",
+      paragraph: { rich_text: [{ type: "text", text: { content: "How to Get Rich" } }] },
+    });
   });
 });
