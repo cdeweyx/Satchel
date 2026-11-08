@@ -77,6 +77,32 @@ function section(prompt: string, from: string, to: string): string[] {
   return prompt.slice(start, end).trim().split("\n");
 }
 
+// The SAT-40 scoring set (`.context/eval/eval.jsonl`, gitignored). Empty when it isn't there.
+const evalFiles = import.meta.glob<string>("/.context/eval/eval.jsonl", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+function evalTitles(): string[] {
+  return Object.values(evalFiles).flatMap((text) =>
+    text
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => (JSON.parse(l) as { title: string }).title),
+  );
+}
+
+// A title without its notification count and site suffix, lowercased, plain quotes.
+function titleCore(title: string): string {
+  return title
+    .replace(/^\(\d+\)\s*/, "")
+    .split(/ \| | – | — | · | - /)[0]!
+    .replace(/[’ʼ]/g, "'")
+    .replace(/[“”]/g, '"')
+    .trim()
+    .toLowerCase();
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -183,9 +209,8 @@ describe("request shape", () => {
     ]);
   });
 
-  it("system prompt holds exactly the seven examples and none of the four held-out titles", () => {
-    const prompt = systemPrompt(TAGS);
-    expect(section(prompt, "Examples (title → tags):", "Allowed tags: ")).toEqual([
+  it("system prompt holds the seven original examples plus fifteen archive examples (SAT-40)", () => {
+    expect(section(systemPrompt(TAGS), "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
       "- Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
@@ -194,9 +219,33 @@ describe("request shape", () => {
       "- Seven Phrases I Stole From Staff Engineers → Career",
       "- The Most Important Question of Your Life → Self-Improvement, Mindfulness",
       "- The Growth Maze vs The Idea Maze → Growth",
+      "- The Startup Drake Equation → Startups",
+      "- Lessons From My First Exit → Startups",
+      "- Scarcity During Experimentation, Abundance During Scaling → Startups",
+      "- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth",
+      "- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth",
+      "- Mistaking Outputs for Inputs → Thinking",
+      "- Why Books Don't Work → Mental Models, Thinking",
+      "- Building Without Predicting → Self-Improvement, Mental Models",
+      "- Product Innovation Is Discovery Not Creation → Product",
+      "- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product",
+      "- Managing Up → Career",
+      "- Why Are Big Tech Companies So Slow? → Career, Product",
+      "- The Definitive Guide to Mastering Product Sense Interviews → Career, Product",
+      "- How to Calm the Anxious Brain → Self-Improvement, Mindfulness",
+      "- The Paradox of \"Finding Yourself\" → Self-Improvement, Mindfulness",
     ]);
+  });
+
+  it("system prompt carries none of the held-out titles (SAT-38) and none of the 40 scoring titles (SAT-40)", () => {
+    const prompt = systemPrompt(TAGS);
+    const lower = prompt.toLowerCase();
     // Held out for the lead's live re-check (SAT-38): the prompt must not carry their answers.
     for (const heldOut of [
+      "What Is Good Retention",
+      "Ideas Aren't Getting Harder to Find",
+      "Aaron Levie",
+      "Five More Leadership Lessons",
       "Levie",
       "last mile",
       "Retention",
@@ -205,7 +254,12 @@ describe("request shape", () => {
       "Asterisk",
       "Leadership Lessons",
     ]) {
-      expect(prompt).not.toContain(heldOut);
+      expect(lower).not.toContain(heldOut.toLowerCase());
+    }
+    // The scoring set is personal and gitignored, so it's checked only where it exists.
+    for (const title of evalTitles()) {
+      expect(lower, title).not.toContain(title.toLowerCase());
+      expect(lower, title).not.toContain(titleCore(title));
     }
   });
 

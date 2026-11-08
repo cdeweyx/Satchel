@@ -17,7 +17,10 @@ export type ClaudeOutput = { title: string; tags: string[] };
 // user's review of real saves and their 512 hand-tagged archive rows (SAT-38, 2026-11-08).
 // The "any page text given" line reads "any description given": we never send page body
 // text (D-8). Four reviewed saves are held out of the examples on purpose, so the live
-// re-check measures the rules, not lookup.
+// re-check measures the rules, not lookup. The 15 examples after the first 7 come from the
+// archive (SAT-40), chosen to show its contrasts: Startups over Growth, Mental Models over
+// Thinking, Product + Career, Mindfulness + Self-Improvement, and mostly one tag. None of
+// them are in the 40-row scoring set (scripts/eval-tags.ts).
 const PROMPT = `You clean up titles for links saved to a personal reading database and pick tags for them.
 
 Title rules:
@@ -57,6 +60,21 @@ Examples (title → tags):
 - Seven Phrases I Stole From Staff Engineers → Career
 - The Most Important Question of Your Life → Self-Improvement, Mindfulness
 - The Growth Maze vs The Idea Maze → Growth
+- The Startup Drake Equation → Startups
+- Lessons From My First Exit → Startups
+- Scarcity During Experimentation, Abundance During Scaling → Startups
+- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth
+- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth
+- Mistaking Outputs for Inputs → Thinking
+- Why Books Don't Work → Mental Models, Thinking
+- Building Without Predicting → Self-Improvement, Mental Models
+- Product Innovation Is Discovery Not Creation → Product
+- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product
+- Managing Up → Career
+- Why Are Big Tech Companies So Slow? → Career, Product
+- The Definitive Guide to Mastering Product Sense Interviews → Career, Product
+- How to Calm the Anxious Brain → Self-Improvement, Mindfulness
+- The Paradox of "Finding Yourself" → Self-Improvement, Mindfulness
 
 Allowed tags: `;
 
