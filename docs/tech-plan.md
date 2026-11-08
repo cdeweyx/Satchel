@@ -90,6 +90,7 @@ Stored URL: canonical, host lowercased, `m.` and `mobile.` dropped, `www.` as gi
 - Door: one-way. Confirm by: M0 curl of a clipper URL returns its id; `m.`, `www.` and bare fixtures dedupe to one row.
 - Status: revised round 1, 2026-11-07: stored URL, both-host clauses.
 - Status: decided (user review, 2026-11-07).
+- Status: revised in build, 2026-11-08 (SAT-6): X hits are post-filtered to an exact id (the `contains` clause also matches longer ids); a stored URL with a query uses `starts_with + "&"` instead of `+ "?"`; a bare root URL's `+ "/"` clause uses the slashless form.
 
 ### D-3 Order the title chain and define the fallback title
 
