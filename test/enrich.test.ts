@@ -1929,11 +1929,15 @@ describe("SAT-45: an X Article keeps its own title", () => {
 });
 
 describe("SAT-48: the new row's page body gets the preview image or the summary", () => {
+  // SAT-52: every append puts its block first in the page body.
+  const AT_START = { position: { type: "start" } };
   const imageBody = (url: string) => ({
     children: [{ type: "image", image: { type: "external", external: { url } } }],
+    ...AT_START,
   });
   const paragraphBody = (content: string) => ({
     children: [{ type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content } }] } }],
+    ...AT_START,
   });
   const head = (inner: string) =>
     `<html><head><title>Hello World, Properly</title>${inner}</head><body><p>Body text.</p></body></html>`;
@@ -2090,7 +2094,9 @@ describe("SAT-48: the new row's page body gets the preview image or the summary"
   it.each([
     ["an avatar", "https://pbs.twimg.com/profile_images/123/naval_400x400.jpg"],
     ["X's default card", "https://abs.twimg.com/rweb/ssr/default/v2/og/image.png"],
-  ])("X whose og:image is %s: no append", async (_label, image) => {
+  // SAT-52 changed this test's append assertion: under SAT-48 it was "no append". The post has
+  // text of its own, so with no photo read its card now shows that text, links stripped.
+  ])("X whose og:image is %s: no image, the post text (links stripped) is the paragraph", async (_label, image) => {
     captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, xOembed('Look at this <a href="https://t.co/AbC123">pic.twitter.com/AbC123</a>'));
@@ -2101,21 +2107,124 @@ describe("SAT-48: the new row's page body gets the preview image or the summary"
     await runInWaitUntil(xJob());
 
     expect(seen.map(route)).toContain(`GET ${X_PAGE}`);
-    expect(appends(seen)).toEqual([]);
+    expect(appends(seen).map((s) => s.body)).toEqual([paragraphBody("Look at this")]);
   });
 
-  it("X without media: x.com isn't read, and nothing is appended (no paragraph for X)", async () => {
+  // SAT-52 replaced SAT-48's "X without media: nothing is appended (no paragraph for X)".
+  it("SAT-52: X text-only post: x.com isn't read, and its post text is one paragraph, links stripped", async () => {
     const logs = captureLogs();
     const { seen, record } = recorder();
-    mockOembed(record, xOembed("How to Get Rich (without getting lucky):"));
+    mockOembed(
+      record,
+      xOembed(
+        'How to Get Rich<br><br>Read <a href="https://t.co/AbC123">nav.al/rich</a> and ' +
+          '<a href="https://t.co/Zz9">https://t.co/Zz9</a> &amp; think.',
+      ),
+    );
     htmlPage(X_PAGE, record, xPageHtml("https://pbs.twimg.com/media/GaBcDeF.jpg"));
+    mockNotion(record, { name: `X post ${X_ID}` });
+    const versions = mockBody(record);
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map(route)).toEqual([`GET ${OEMBED}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`, `PATCH ${BODY_URL}`]);
+    expect(seen[3]!.body).toEqual(paragraphBody("How to Get Rich Read and & think."));
+    expect(versions).toEqual(["2026-03-11"]);
+    expect(logs().map((l) => l.event)).toEqual(["enrich"]);
+  });
+
+  it("SAT-52: X text-only post, long: post text cut to about 300 characters on a word boundary", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed(`${"word ".repeat(70)}<a href="https://t.co/AbC123">https://t.co/AbC123</a>`));
     mockNotion(record, { name: `X post ${X_ID}` });
     mockBody(record);
 
     await runInWaitUntil(xJob());
 
-    expect(seen.map(route)).toEqual([`GET ${OEMBED}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`]);
-    expect(logs().map((l) => l.event)).toEqual(["enrich"]);
+    expect(appends(seen).map((s) => s.body)).toEqual([paragraphBody(`${"word ".repeat(60).trimEnd()}…`)]);
+  });
+
+  it("SAT-52: X link-only post (SAT-37's no-text path): no Claude, no Name, no append", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed('<a href="https://t.co/Lv1eB0x">https://t.co/Lv1eB0x</a>'));
+    // The page describes no post (X's logged-out card), so lookupX keeps the link-only text.
+    htmlPage(
+      X_PAGE,
+      record,
+      '<html><head><meta property="og:title" content="X"><meta property="og:description" content="From breaking news and entertainment to sports and politics, get the full story.">' +
+        '<meta property="og:image" content="https://abs.twimg.com/rweb/ssr/default/v2/og/image.png"></head></html>',
+    );
+    mockNotion(record, { name: `X post ${X_ID}` });
+    mockBody(record);
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map(route)).toEqual([`GET ${OEMBED}`, `GET ${X_PAGE}`, `GET ${PAGE_URL}`, `PATCH ${PAGE_URL}`]);
+    expect(seen[3]!.body).toEqual({ properties: { [PROPS.url]: { url: X_CANONICAL } } });
+    expect(appends(seen)).toEqual([]);
+    expect(logs()).toEqual([expect.objectContaining({ event: "enrich", claude: false, reason: "no_text_x" })]);
+  });
+
+  describe("SAT-52: an X Article (SAT-45)", () => {
+    const A = JSON.parse(articleText) as {
+      storedUrl: string;
+      oembed: Record<string, unknown>;
+      page: { ogTitle: string; ogDescription: string };
+    };
+    const OEMBED_BODY = JSON.stringify(A.oembed).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+    const articlePage = (image?: string) =>
+      `<html><head><meta property="og:title" content="${A.page.ogTitle}"/>` +
+      `<meta property="og:description" content="${A.page.ogDescription}"/>` +
+      (image ? `<meta property="og:image" content="${image}"/>` : "") +
+      "</head><body></body></html>";
+
+    it("no image: one paragraph holding its article title", async () => {
+      captureLogs();
+      const { seen, record } = recorder();
+      mockOembed(record, OEMBED_BODY);
+      htmlPage(A.storedUrl, record, articlePage());
+      mockNotion(record, { name: "@levie on X", url: A.storedUrl });
+      mockBody(record);
+
+      await runInWaitUntil(xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" }));
+
+      expect(appends(seen).map((s) => s.body)).toEqual([paragraphBody("The never-ending last mile of work")]);
+    });
+
+    it("with its own photo: the image, no paragraph", async () => {
+      captureLogs();
+      const { seen, record } = recorder();
+      mockOembed(record, OEMBED_BODY);
+      htmlPage(A.storedUrl, record, articlePage("https://pbs.twimg.com/media/ArtCover.jpg"));
+      mockNotion(record, { name: "@levie on X", url: A.storedUrl });
+      mockBody(record);
+
+      await runInWaitUntil(xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" }));
+
+      expect(appends(seen).map((s) => s.body)).toEqual([imageBody("https://pbs.twimg.com/media/ArtCover.jpg")]);
+    });
+  });
+
+  it("SAT-52: every append, image or paragraph, sends position start", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, head('<meta property="og:image" content="https://cdn.example.com/cover.jpg">'));
+    mockNotion(record, { name: "Hello world · example.com" });
+    mockBody(record);
+    await runInWaitUntil(pageJob());
+
+    htmlPage(ARTICLE, record, head('<meta property="og:description" content="The summary.">'));
+    await runInWaitUntil(pageJob());
+
+    mockOembed(record, xOembed("How to Get Rich"));
+    mockNotion(record, { name: `X post ${X_ID}` });
+    await runInWaitUntil(xJob());
+
+    const bodies = appends(seen).map((s) => s.body as { children: { type: string }[]; position: unknown });
+    expect(bodies.map((b) => b.children[0]!.type)).toEqual(["image", "paragraph", "paragraph"]);
+    for (const b of bodies) expect(b.position).toEqual({ type: "start" });
   });
 
   it("description only: og:description as one paragraph", async () => {
