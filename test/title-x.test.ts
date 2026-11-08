@@ -388,6 +388,7 @@ describe("SAT-43: an X Article gets its text from the Twitterbot page", () => {
       author: "Aaron Levie",
       handle: "levie",
       source: "x-oembed",
+      article: true, // SAT-45: added to this SAT-43 assertion
       bytesRead: bytes(ARTICLE_OEMBED) + bytes(ARTICLE_PAGE),
     });
     expect(seen.map((s) => [s.url.split("?")[0], s.userAgent])).toEqual([
@@ -475,6 +476,45 @@ describe("SAT-43: an X Article gets its text from the Twitterbot page", () => {
 
     expect(performance.now() - start).toBeLessThan(1000);
     expect(result).toEqual(unchanged(0));
+  });
+});
+
+// SAT-45: lookupX marks the Article page path `article: true` so enrich sends Claude the titled
+// shape. Nothing else carries the flag.
+describe("SAT-45: only the Article page path is marked article", () => {
+  it("the Levie Article: article true, with the article title as the post text", async () => {
+    network.use(
+      http.get(OEMBED, () => jsonText(ARTICLE_OEMBED)),
+      http.get(ARTICLE_PAGE_URL, () => htmlText(ARTICLE_PAGE)),
+    );
+
+    const result = await lookupX(ARTICLE.id, signal());
+
+    expect(result).toMatchObject({ article: true, description: "The never-ending last mile of work" });
+  });
+
+  it.each([
+    ["a post with text of its own (oEmbed)", () => [http.get(OEMBED, () => jsonText(NAVAL_OEMBED))], ID],
+    [
+      "the Twitterbot fallback",
+      () => [http.get(OEMBED, () => htmlText(NOT_FOUND_HTML, 404)), http.get(PAGE, () => htmlText(NAVAL_PAGE))],
+      ID,
+    ],
+    [
+      "a link-only post the page doesn't describe",
+      () => [
+        http.get(OEMBED, () => jsonText(ARTICLE_OEMBED)),
+        http.get(ARTICLE_PAGE_URL, () => htmlText(xPage(ARTICLE.page.ogTitle, ""))),
+      ],
+      ARTICLE.id,
+    ],
+  ])("%s: no article flag", async (_label, handlers, id) => {
+    network.use(...handlers());
+
+    const result = await lookupX(id, signal());
+
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty("article");
   });
 });
 

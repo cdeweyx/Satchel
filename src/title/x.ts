@@ -12,6 +12,9 @@ export type XTitle = {
   author?: string;
   handle?: string;
   source: "x-oembed" | "x-twitterbot";
+  // SAT-45: the text is an X Article's title, read from x.com's page because oEmbed's post
+  // text was only links (SAT-43). Absent on every other result.
+  article?: true;
   bytesRead: number;
 };
 
@@ -252,9 +255,10 @@ export function pageText(ogTitle: string, ogDescription: string): string | null 
  * Raw title for an X post id: `${author}: ${post text}`. oEmbed first (its `url` is the
  * canonical `x.com/<user>/status/<id>`), then the Twitterbot read of x.com. When oEmbed's
  * post text is only links (SAT-43), the Twitterbot page is read for the text, oEmbed keeps
- * the rest; a page that fails or describes no post leaves oEmbed's result as it was. Each
- * fetch gets 4 s on top of the caller's signal. `bytesRead` is every body byte read across
- * both fetches. Null on any failure; never throws.
+ * the rest and the result is marked `article: true` (SAT-45); a page that fails or describes
+ * no post leaves oEmbed's result as it was. Each fetch gets 4 s on top of the caller's
+ * signal. `bytesRead` is every body byte read across both fetches. Null on any failure;
+ * never throws.
  */
 export async function lookupX(id: string, signal: AbortSignal): Promise<XTitle | null> {
   try {
@@ -266,7 +270,7 @@ export async function lookupX(id: string, signal: AbortSignal): Promise<XTitle |
       const bytesRead = first.bytesRead + page.bytesRead;
       const text = page.ok ? pageText(page.ogTitle, page.ogDescription) : null;
       if (!text) return { ...first.result, bytesRead };
-      return { ...first.result, title: `${first.result.author}: ${text}`, description: text, bytesRead };
+      return { ...first.result, title: `${first.result.author}: ${text}`, description: text, article: true, bytesRead };
     }
     if (signal.aborted) return null;
     const second = await viaTwitterbot(id, signal);

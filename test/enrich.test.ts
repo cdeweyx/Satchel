@@ -1633,7 +1633,9 @@ describe("SAT-43: an X Article gets a real title", () => {
   const articleJob = () => xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" });
   const PLACEHOLDER = { name: "@levie on X", url: A.storedUrl, tags: [] };
 
-  it("criteria 1 and 2: Claude gets the x shape with the article title; its title and tags land, URL swapped", async () => {
+  // SAT-45 changed this test's Claude assertion: it pinned the `x` shape for the Article, which
+  // asked Claude for a gist. An Article is now the `titled` shape with its title.
+  it("criteria 1 and 2: Claude gets the titled shape with the article title (SAT-45); its title and tags land, URL swapped", async () => {
     const logs = captureLogs();
     const { seen, record } = recorder();
     mockOembed(record, OEMBED_BODY);
@@ -1656,7 +1658,7 @@ describe("SAT-43: an X Article gets a real title", () => {
     expect((seen[3]!.body as ClaudeBody).messages).toEqual([
       {
         role: "user",
-        content: `X post by Aaron Levie (@levie): "The never-ending last mile of work"\nURL: ${A.storedUrl}`,
+        content: `Title: The never-ending last mile of work\nURL: ${A.storedUrl}`,
       },
     ]);
     expect(seen[5]!.body).toEqual({
@@ -1752,4 +1754,143 @@ describe("SAT-43: an X Article gets a real title", () => {
       ]);
     },
   );
+});
+
+// SAT-45: an X Article's text is its own title, so Claude gets the `titled` shape (clean it, like
+// a page title) instead of the `x` shape (write a gist). Live miss: Levie's article came back as
+// "Why Work Always Has a Never-Ending Last Mile". Same Levie fixture as SAT-43.
+describe("SAT-45: an X Article keeps its own title", () => {
+  const A = JSON.parse(articleText) as {
+    storedUrl: string;
+    canonicalUrl: string;
+    oembed: Record<string, unknown>;
+    page: { ogTitle: string; ogDescription: string };
+  };
+  const OEMBED_BODY = JSON.stringify(A.oembed).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+  const ogPage = (ogTitle: string, ogDescription: string) =>
+    `<html><head><meta property="og:title" content="${ogTitle}"/>` +
+    `<meta property="og:description" content="${ogDescription}"/></head><body></body></html>`;
+  const PAGE = ogPage(A.page.ogTitle, A.page.ogDescription);
+  const TITLED = `Title: The never-ending last mile of work\nURL: ${A.storedUrl}`;
+
+  function mockArticle(record: Record_) {
+    mockOembed(record, OEMBED_BODY);
+    htmlPage(A.storedUrl, record, PAGE);
+    mockSchema(record, OPTIONS);
+  }
+
+  it("criterion 1: Claude gets the titled shape with the article title and no author; its clean title and tags land", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockArticle(record);
+    mockClaude(record, () => claudeAnswer({ title: "The Never-Ending Last Mile of Work", tags: ["AI", "Product"] }));
+    mockNotion(record, { name: "@levie on X", url: A.storedUrl, tags: [] });
+
+    await runInWaitUntil(xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" }));
+
+    const claudeBody = seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody;
+    expect(claudeBody.messages).toEqual([{ role: "user", content: TITLED }]);
+    expect(claudeBody.messages[0]!.content).not.toMatch(/X post by|Aaron Levie|@levie/);
+    expect(claudeBody.output_config.format.schema.properties.tags.items.enum).toEqual(OPTIONS.map((o) => o.name));
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        ...nameProp("The Never-Ending Last Mile of Work"),
+        [PROPS.url]: { url: A.canonicalUrl },
+        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }, { id: "opt-product" }] },
+      },
+    });
+    expect(logs().find((l) => l.event === "enrich")).toMatchObject({ source: "x-oembed", claude: true, tags: 2 });
+  });
+
+  it("criterion 1 with a client title (Chrome's tab title): still the titled shape with the article title", async () => {
+    captureLogs();
+    const clientTitle = 'Aaron Levie on X: "The never-ending last mile of work" / X';
+    const { seen, record } = recorder();
+    mockArticle(record);
+    mockClaude(record, () => claudeAnswer({ title: "The Never-Ending Last Mile of Work", tags: ["AI"] }));
+    mockNotion(record, { name: clientTitle, url: A.storedUrl, tags: [] });
+
+    await runInWaitUntil(xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X", clientTitle }));
+
+    expect((seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody).messages).toEqual([
+      { role: "user", content: TITLED },
+    ]);
+    // A client-title save never swaps the URL (SAT-41).
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        ...nameProp("The Never-Ending Last Mile of Work"),
+        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] },
+      },
+    });
+  });
+
+  it("criterion 2: with Claude failing, the Name is the article title as written (page titles have no Title Case fallback)", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockArticle(record);
+    mockClaude(record, claude401);
+    mockNotion(record, { name: "@levie on X", url: A.storedUrl, tags: [] });
+
+    await runInWaitUntil(xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" }));
+
+    expect((seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody).messages).toEqual([
+      { role: "user", content: TITLED },
+    ]);
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { ...nameProp("The never-ending last mile of work"), [PROPS.url]: { url: A.canonicalUrl } },
+    });
+  });
+
+  it("criterion 3: the same words as a normal post's own text keep the x gist shape", async () => {
+    captureLogs();
+    const oembed = {
+      ...A.oembed,
+      html: '<blockquote class="twitter-tweet"><p lang="en" dir="ltr">The never-ending last mile of work</p>&mdash; Aaron Levie (@levie)</blockquote>',
+    };
+    const { seen, record } = recorder();
+    mockOembed(record, JSON.stringify(oembed));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "Work Never Quite Finishes", tags: ["Product"] }));
+    mockNotion(record, { name: "@levie on X", url: A.storedUrl, tags: [] });
+
+    await runInWaitUntil(xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" }));
+
+    // oEmbed had text, so x.com's page was never read.
+    expect(seen.some((s) => s.url === A.storedUrl)).toBe(false);
+    expect((seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody).messages).toEqual([
+      { role: "user", content: `X post by Aaron Levie (@levie): "The never-ending last mile of work"\nURL: ${A.storedUrl}` },
+    ]);
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        ...nameProp("Work Never Quite Finishes"),
+        [PROPS.url]: { url: A.canonicalUrl },
+        [PROPS.tags]: { multi_select: [{ id: "opt-product" }] },
+      },
+    });
+  });
+
+  it("toClaudeInput: the article flag, not the text, picks titled over x", () => {
+    const lookup = {
+      title: "Aaron Levie: The never-ending last mile of work",
+      url: A.canonicalUrl,
+      description: "The never-ending last mile of work",
+      author: "Aaron Levie",
+      handle: "levie",
+      source: "x-oembed" as const,
+      bytesRead: 100,
+    };
+    const job = xJob({ storedUrl: A.storedUrl });
+    expect(toClaudeInput(job, { ...lookup, article: true })).toEqual({
+      shape: "titled",
+      title: "The never-ending last mile of work",
+      url: A.storedUrl,
+    });
+    expect(toClaudeInput(job, lookup)).toEqual({
+      shape: "x",
+      author: "Aaron Levie",
+      handle: "levie",
+      text: "The never-ending last mile of work",
+      url: A.storedUrl,
+    });
+  });
 });
