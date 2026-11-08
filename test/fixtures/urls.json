@@ -1,0 +1,39 @@
+{
+  "_about": "Expected values are written from the plan text (docs/tech-plan.md, Rules in full, Canonicalization (D-5)) and L3 section 6 (docs/research/03-titles-urls.md), never from running the code. L3's 'Expected canonical' column predates the round-1 www rule, so it's checked as dedupe.bare; 'stored' keeps www. as the input had it. X rows carry the post id instead.",
+  "l3": [
+    { "input": "https://x.com/naval/status/1002103360646823936?s=46&t=abcDEF", "stored": "https://x.com/i/status/1002103360646823936", "xId": "1002103360646823936", "kind": "x", "media": false },
+    { "input": "https://twitter.com/naval/status/1002103360646823936", "stored": "https://x.com/i/status/1002103360646823936", "xId": "1002103360646823936", "kind": "x", "media": false },
+    { "input": "https://mobile.twitter.com/naval/status/1002103360646823936", "stored": "https://x.com/i/status/1002103360646823936", "xId": "1002103360646823936", "kind": "x", "media": false },
+    { "input": "https://x.com/i/status/1002103360646823936", "stored": "https://x.com/i/status/1002103360646823936", "xId": "1002103360646823936", "kind": "x", "media": false },
+    { "input": "https://x.com/i/web/status/1002103360646823936", "stored": "https://x.com/i/status/1002103360646823936", "xId": "1002103360646823936", "kind": "x", "media": false },
+    { "input": "https://x.com/naval/status/1002103360646823936/photo/1", "stored": "https://x.com/i/status/1002103360646823936", "xId": "1002103360646823936", "kind": "x", "media": false },
+    { "input": "https://x.com/naval", "stored": "https://x.com/naval", "bare": "https://x.com/naval", "kind": "page", "media": false },
+    { "input": "https://youtu.be/dQw4w9WgXcQ?si=abc123", "stored": "https://youtube.com/watch?v=dQw4w9WgXcQ", "bare": "https://youtube.com/watch?v=dQw4w9WgXcQ", "kind": "media", "media": true },
+    { "input": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&feature=youtu.be&t=42s", "stored": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "bare": "https://youtube.com/watch?v=dQw4w9WgXcQ", "kind": "media", "media": true },
+    { "input": "https://www.youtube.com/shorts/aqz-KE-bpKQ", "stored": "https://www.youtube.com/watch?v=aqz-KE-bpKQ", "bare": "https://youtube.com/watch?v=aqz-KE-bpKQ", "kind": "media", "media": true },
+    { "input": "https://m.youtube.com/watch?v=dQw4w9WgXcQ", "stored": "https://youtube.com/watch?v=dQw4w9WgXcQ", "bare": "https://youtube.com/watch?v=dQw4w9WgXcQ", "kind": "media", "media": true },
+    { "input": "https://open.spotify.com/episode/7makk4oTQel546B0PZlDM5?si=XYZ", "stored": "https://open.spotify.com/episode/7makk4oTQel546B0PZlDM5", "bare": "https://open.spotify.com/episode/7makk4oTQel546B0PZlDM5", "kind": "media", "media": true },
+    { "input": "https://www.lennysnewsletter.com/p/what-is-good-retention-issue-29?utm_source=substack&utm_medium=email&r=abc&s=r", "stored": "https://www.lennysnewsletter.com/p/what-is-good-retention-issue-29", "bare": "https://lennysnewsletter.com/p/what-is-good-retention-issue-29", "kind": "page", "media": false },
+    { "input": "https://medium.com/@kentbeck_7670/thinking-about-code-review-cfd6e3b6cc7d?source=rss----abc", "stored": "https://medium.com/@kentbeck_7670/thinking-about-code-review-cfd6e3b6cc7d", "bare": "https://medium.com/@kentbeck_7670/thinking-about-code-review-cfd6e3b6cc7d", "kind": "page", "media": false },
+    { "input": "https://www.nytimes.com/2025/01/27/technology/deepseek.html?smid=nytcore-ios-share&referringSource=articleShare&unlocked_article_code=1.abc", "stored": "https://www.nytimes.com/2025/01/27/technology/deepseek.html?unlocked_article_code=1.abc", "bare": "https://nytimes.com/2025/01/27/technology/deepseek.html?unlocked_article_code=1.abc", "kind": "page", "media": false },
+    { "input": "http://example.com/a/?fbclid=IwAR123&gclid=x&mc_cid=1&mc_eid=2#section", "stored": "https://example.com/a", "bare": "https://example.com/a", "kind": "page", "media": false },
+    { "input": "https://example.com/path?page=2&utm_campaign=x&ID=7", "stored": "https://example.com/path?page=2&ID=7", "bare": "https://example.com/path?page=2&ID=7", "kind": "page", "media": false },
+    { "input": "https://podcasts.apple.com/us/podcast/lennys-podcast/id1627920305?i=1000600000000&l=en-US", "stored": "https://podcasts.apple.com/us/podcast/lennys-podcast/id1627920305?i=1000600000000", "bare": "https://podcasts.apple.com/us/podcast/lennys-podcast/id1627920305?i=1000600000000", "kind": "media", "media": true },
+    { "input": "https://github.com/cloudflare/workers-sdk/", "stored": "https://github.com/cloudflare/workers-sdk", "bare": "https://github.com/cloudflare/workers-sdk", "kind": "page", "media": false },
+    { "input": "https://EXAMPLE.com/Path/To?b=1", "stored": "https://example.com/Path/To?b=1", "bare": "https://example.com/Path/To?b=1", "kind": "page", "media": false }
+  ],
+  "nytimesHostForms": [
+    { "input": "https://m.nytimes.com/2025/01/27/technology/deepseek.html", "stored": "https://nytimes.com/2025/01/27/technology/deepseek.html", "bare": "https://nytimes.com/2025/01/27/technology/deepseek.html", "kind": "page", "media": false },
+    { "input": "https://www.nytimes.com/2025/01/27/technology/deepseek.html", "stored": "https://www.nytimes.com/2025/01/27/technology/deepseek.html", "bare": "https://nytimes.com/2025/01/27/technology/deepseek.html", "kind": "page", "media": false },
+    { "input": "https://nytimes.com/2025/01/27/technology/deepseek.html", "stored": "https://nytimes.com/2025/01/27/technology/deepseek.html", "bare": "https://nytimes.com/2025/01/27/technology/deepseek.html", "kind": "page", "media": false }
+  ],
+  "paramReadWrappers": [
+    { "input": "https://www.google.com/url?q=https%3A%2F%2Fwww.nytimes.com%2F2025%2F01%2F27%2Ftechnology%2Fdeepseek.html%3Fsmid%3Dnytcore-ios-share&sa=D&source=editors", "stored": "https://www.nytimes.com/2025/01/27/technology/deepseek.html", "bare": "https://nytimes.com/2025/01/27/technology/deepseek.html", "kind": "page", "media": false },
+    { "input": "https://l.facebook.com/l.php?u=https%3A%2F%2Fexample.com%2Fpath%3Fpage%3D2%26fbclid%3DIwAR1&h=AT0abc", "stored": "https://example.com/path?page=2", "bare": "https://example.com/path?page=2", "kind": "page", "media": false },
+    { "input": "https://out.reddit.com/t3_abc123?url=https%3A%2F%2Fgithub.com%2Fcloudflare%2Fworkers-sdk%2F&token=xyz&app_name=web", "stored": "https://github.com/cloudflare/workers-sdk", "bare": "https://github.com/cloudflare/workers-sdk", "kind": "page", "media": false }
+  ],
+  "keptWrappers": [
+    { "input": "https://t.co/sHDm57g3Kr", "stored": "https://t.co/sHDm57g3Kr", "bare": "https://t.co/sHDm57g3Kr", "kind": "page", "media": false },
+    { "input": "https://substack.com/redirect/aee2338d-0000-4000-8000-000000000000?j=eyJhbGciOi", "stored": "https://substack.com/redirect/aee2338d-0000-4000-8000-000000000000?j=eyJhbGciOi", "bare": "https://substack.com/redirect/aee2338d-0000-4000-8000-000000000000?j=eyJhbGciOi", "kind": "page", "media": false }
+  ]
+}
