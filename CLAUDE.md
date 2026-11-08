@@ -35,6 +35,7 @@ Plan: `docs/tech-plan.md` (decisions D-1 to D-17, appendix "Rules in full"). Bui
 ## Branches and PRs (direct mode)
 
 - One issue, one branch off `main`, named with Linear's branch name. One PR into `main` with `Fixes SAT-n`.
+- Every PR that changes what works, a command, setup or the repo layout updates the README's Status and the affected section in the same PR.
 - PR body: the implementer's status report, the tail of `npm run check` on the head sha, `Fixes SAT-n`.
 - An agent review posts `Verdict: <...> @ <head sha>`. Only the lead merges, with `scripts/merge.sh <pr>`. Nobody else merges.
 - Never rebase or force-push a shared branch. Never push a planted or real secret anywhere.
