@@ -240,7 +240,12 @@ const TAB = {
 // and saves carry only url, title and status, as before SAT-58.
 const BARE_PAGE = "<html><head><title>A page</title></head><body><p>Short.</p></body></html>";
 
-type Injection = { target: { tabId: number }; func: (...args: unknown[]) => unknown; args?: unknown[] };
+type Injection = {
+  target: { tabId: number };
+  func: (...args: unknown[]) => unknown;
+  args?: unknown[];
+  injectImmediately?: boolean;
+};
 
 interface Pending {
   message: Record<string, unknown>;
@@ -336,8 +341,10 @@ async function open({
   const mock = createChromeMock(storage);
   const chrome = mock.chrome as any;
   chrome.runtime.lastError = undefined;
+  // A closed popup is torn down (SAT-58 review): nothing it tries to send after window.close()
+  // leaves it, so a save that wasn't out by then is lost.
   chrome.runtime.sendMessage = (message: Record<string, unknown>) =>
-    new Promise((resolve, reject) => sent.push({ message, resolve, reject }));
+    closedAt !== null ? new Promise(() => {}) : new Promise((resolve, reject) => sent.push({ message, resolve, reject }));
   chrome.runtime.connect = ({ name }: { name: string }) => {
     const listeners: (() => void)[] = [];
     const port: FakePort = {
@@ -1129,21 +1136,46 @@ describe("SAT-58: the save carries the tab's preview", () => {
     expect(messages()).toEqual([save("later")]);
   });
 
-  it("a slow read: L right away waits until 300 ms after open, then sends without it", async () => {
+  // Review fix round: replaced "L right away waits until 300 ms after open". A save never
+  // waits for the preview.
+  it("a slow read: L right away sends at once without it, and the late result isn't sent", async () => {
     let finish!: (v: unknown) => void;
     await open({ executeScript: () => new Promise((resolve) => (finish = resolve)) });
     await press("l");
-    expect(messages()).toEqual([]);
-    expect(keycapFilled("later")).toBe(true);
-    await wait(299);
-    expect(messages()).toEqual([]);
-    await wait(1);
     expect(messages()).toEqual([save("later")]);
+    expect(keycapFilled("later")).toBe(true);
     finish([{ frameId: 0, result: { image: COVER } }]); // too late to count
     await flush();
     await reply(0, { ok: true, id: "page-1" });
     expect(isShown("stamp-later")).toBe(true);
     expect(messages()).toEqual([save("later")]);
+  });
+
+  it.each([
+    ["esc", () => press("Escape")],
+    ["a click away (Chrome closes the popup)", async () => (globalThis as any).window.close()],
+  ])("L, then %s before the preview settles: the save still went out", async (_name, close) => {
+    await open({ executeScript: () => new Promise(() => {}) });
+    await press("l");
+    await close();
+    expect(closedAt).not.toBeNull();
+    await wait(1000);
+    expect(messages()).toEqual([save("later")]);
+  });
+
+  it("R, then esc before the preview settles: the read still went out", async () => {
+    await open({ executeScript: () => new Promise(() => {}) });
+    await press("r");
+    await press("Escape"); // ends the favorite window
+    await press("Escape"); // closes
+    expect(closedAt).not.toBeNull();
+    expect(messages()).toEqual([save("read")]);
+  });
+
+  it("asks Chrome to inject at once, so a tab still loading doesn't wait for document_idle", async () => {
+    await open();
+    expect(injections).toHaveLength(1);
+    expect(injections[0]).toMatchObject({ target: { tabId: 42 }, injectImmediately: true });
   });
 
   it("a read that never answers doesn't hold a later press at all", async () => {

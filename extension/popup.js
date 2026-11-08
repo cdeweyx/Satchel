@@ -9,8 +9,9 @@
 //
 // SAT-58: on open, the popup quietly reads the page's preview (og:image, a description or
 // the first real paragraph) from the tab, and a save carries it so the Worker has a fallback
-// when it can't read the page itself. Any failure, or a read slower than 300 ms, means the
-// save goes without it, exactly as before.
+// when it can't read the page itself. A save never waits for it: a press sends at once with
+// the preview if the read has finished, and without it (exactly as before) if it hasn't or
+// it failed. So closing the popup can't lose a save to a slow read.
 
 const FAVORITE_WINDOW_MS = 3000;
 const CLOSE_AFTER_MS = 600; // after the reply: the save beat, then close
@@ -22,7 +23,6 @@ const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "F
 const STATUSES = ["later", "read", "favorite"];
 const RECONNECT_MS = [250, 1000]; // then 1 s each time, so a broken worker can't spin a loop
 const PORT_SETTLED_MS = 5000; // a port that lived this long resets the backoff
-const PREVIEW_MS = 300; // the longest a save waits for the tab's preview, from popup open
 
 const $ = (id) => document.getElementById(id);
 const rowOf = (status) => $(`row-${status}`);
@@ -30,7 +30,7 @@ const rowOf = (status) => $(`row-${status}`);
 // loading | setup | rest | window (R's favorite window) | pending | saved | error | closed
 let state = "loading";
 let page = { url: "", title: "" };
-let preview = Promise.resolve({}); // the tab's {image?, description?}; never rejects
+let preview = {}; // the tab's {image?, description?} once the read has finished
 let port = null;
 let portOpenedAt = 0;
 let reconnects = 0;
@@ -80,10 +80,10 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(connectPort, delay);
 }
 
-// Always resolves, to {ok: true, id} or {ok: false, error}. Waits for the tab's preview,
-// which settles within PREVIEW_MS of the popup opening.
-async function send(status) {
-  const { image, description } = await preview;
+// Always resolves, to {ok: true, id} or {ok: false, error}. The message goes out now, with
+// whatever preview has already arrived.
+function send(status) {
+  const { image, description } = preview;
   const message = { type: "save", url: page.url, status };
   if (page.title) message.title = page.title;
   if (image) message.image = image;
@@ -392,24 +392,23 @@ function pagePreview() {
   return out;
 }
 
-// Resolves to the tab's preview, or {} on any failure (chrome:// pages, the PDF viewer, the
-// Web Store, injection denied, a throw) or once PREVIEW_MS passes. Never rejects.
+// Starts the read and stores its result in `preview` when it lands. Any failure (chrome://
+// pages, the PDF viewer, the Web Store, injection denied, a throw) leaves `preview` empty.
+// injectImmediately: a tab that's still loading answers now, not at document_idle.
 function readPreview(tabId) {
-  if (typeof tabId !== "number") return Promise.resolve({});
-  let read;
+  if (typeof tabId !== "number") return;
   try {
-    read = Promise.resolve(chrome.scripting.executeScript({ target: { tabId }, func: pagePreview })).then(
-      (results) => previewFields(results && results[0] && results[0].result),
-      () => ({}),
+    Promise.resolve(
+      chrome.scripting.executeScript({ target: { tabId }, func: pagePreview, injectImmediately: true }),
+    ).then(
+      (results) => {
+        preview = previewFields(results && results[0] && results[0].result);
+      },
+      () => {},
     );
   } catch {
-    return Promise.resolve({});
+    // No preview; saves go without one.
   }
-  let timer;
-  const late = new Promise((resolve) => {
-    timer = setTimeout(() => resolve({}), PREVIEW_MS);
-  });
-  return Promise.race([read, late]).finally(() => clearTimeout(timer));
 }
 
 // Only non-empty strings travel; the Worker checks them again.
@@ -454,7 +453,7 @@ async function init() {
     $("setup").hidden = false;
     $("setup-link").focus();
   } else {
-    preview = readPreview(tab.id);
+    readPreview(tab.id);
     setState("rest");
     $("rows").hidden = false;
     rowOf("later").focus();
