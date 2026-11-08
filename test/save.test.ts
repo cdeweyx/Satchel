@@ -54,7 +54,12 @@ function mockNotion(
 ) {
   const seen: Seen[] = [];
   const events: string[] = [];
-  const record = async (request: Request) => {
+  const record = async (request: {
+    method: string;
+    url: string;
+    headers: { get(name: string): string | null };
+    text(): Promise<string>;
+  }) => {
     const path = new URL(request.url).pathname.replace(/^\/v1/, "");
     const text = await request.text();
     seen.push({
