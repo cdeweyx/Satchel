@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Satchel</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="popup.css">
+  <script type="module" src="popup.js"></script>
+</head>
+<body>
+  <main class="popup" id="popup" data-state="loading">
+    <header class="head">
+      <div class="source">
+        <svg class="mark" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="0.75" y="0.75" width="14.5" height="14.5" rx="3.25" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+          <text x="8" y="12" text-anchor="middle" font-family="Besley" font-weight="800" font-size="11" fill="currentColor">S</text>
+        </svg>
+        <span class="domain" id="domain"></span>
+      </div>
+      <h1 class="title" id="title"></h1>
+    </header>
+
+    <div class="rows" id="rows" hidden>
+      <button type="button" class="row" id="row-later" aria-keyshortcuts="L">
+        <span class="label"><span class="label-stack"><span class="label-text" id="label-later">Send to inbox</span><span class="detail" id="detail-later" hidden></span></span></span>
+        <kbd class="cap" aria-hidden="true">L</kbd>
+        <span class="stamp" id="stamp-later" aria-hidden="true" hidden><span class="stamp-inner">SAVED</span></span>
+      </button>
+      <button type="button" class="row" id="row-read" aria-keyshortcuts="R">
+        <span class="label"><span class="label-stack"><span class="label-text" id="label-read">Mark as archived</span><span class="detail" id="detail-read" hidden></span></span></span>
+        <kbd class="cap" aria-hidden="true">R</kbd>
+        <span class="stamp" id="stamp-read" aria-hidden="true" hidden><span class="stamp-inner">SAVED</span></span>
+      </button>
+      <button type="button" class="row row-favorite" id="row-favorite" aria-keyshortcuts="F" hidden>
+        <span class="label">
+          <svg class="star" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M7 1.4l1.6 3.4 3.7.4-2.8 2.5.8 3.7L7 9.5l-3.3 1.9.8-3.7L1.7 5.2l3.7-.4z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"></path>
+          </svg>
+          <span class="label-stack"><span class="label-text" id="label-favorite">Favorite</span><span class="detail" id="detail-favorite" hidden></span></span>
+        </span>
+        <kbd class="cap" aria-hidden="true">F</kbd>
+        <span class="stamp" id="stamp-favorite" aria-hidden="true" hidden><span class="stamp-inner">SAVED</span></span>
+      </button>
+    </div>
+
+    <div class="rows" id="setup" hidden>
+      <a class="row" id="setup-link" href="options.html" target="_blank" aria-keyshortcuts="S">
+        <span class="label"><span class="label-stack"><span class="label-text">Set up Satchel</span></span></span>
+        <kbd class="cap" aria-hidden="true">S</kbd>
+      </a>
+    </div>
+
+    <footer class="foot">
+      <div class="foot-line" id="foot-default">
+        <span class="hint" id="hint">? for keys</span>
+        <span class="close"><kbd class="cap cap-esc">esc</kbd> close</span>
+      </div>
+      <div class="foot-line keys" id="keys" hidden>
+        <span class="key"><kbd class="cap cap-small">L</kbd> inbox</span>
+        <span class="key"><kbd class="cap cap-small">R</kbd> archive</span>
+        <span class="key"><kbd class="cap cap-small">F</kbd> favorite</span>
+        <span class="key"><kbd class="cap cap-esc">esc</kbd> close</span>
+      </div>
+    </footer>
+
+    <p class="visually-hidden" id="status" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>
