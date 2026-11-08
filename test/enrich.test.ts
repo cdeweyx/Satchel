@@ -695,24 +695,6 @@ describe("enrich: Notion failures (criterion 4)", () => {
   });
 });
 
-describe("enrich: client title (criterion 5)", () => {
-  it("no lookup fetch happens; the first request is the re-read", async () => {
-    const logs = captureLogs();
-    const { seen, record } = recorder();
-    // Lookup handlers that would record if hit.
-    mockOembed(record, xOembed("Should never be read"));
-    htmlPage(X_STORED, record, "<html><head><title>nope</title></head></html>");
-    mockNotion(record, { name: "Client title" });
-
-    await runInWaitUntil(xJob({ clientTitle: "Client title" }));
-
-    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([`GET ${PAGE_URL}`]);
-    expect(logs()).toEqual([
-      expect.objectContaining({ event: "enrich", ok: true, pageId: PAGE_ID, source: "client", patched: false }),
-    ]);
-  });
-});
-
 // --- SAT-15: Claude stage, tag guard, 22 s deadline ---
 
 const PAGE_HTML = "<html><head><title>Hello World, Properly</title></head><body></body></html>";
@@ -1358,5 +1340,157 @@ describe("SAT-37 criteria 2 and 3 (fix round 1): Claude on a no-text X post", ()
     const line = logs()[0]!;
     expect(line).toMatchObject({ event: "enrich", ok: true, claude: true, tags: 1 });
     expect(line).not.toHaveProperty("reason");
+  });
+});
+
+// SAT-41: a save with a client title still runs the lookup, only to give Claude context (the
+// page description or the X post text). Replaces SAT-12's "client title → no lookup fetch".
+describe("SAT-41: a client-title save gives Claude the page summary", () => {
+  const CLIENT = "how to get rich | Medium";
+  const DESCRIPTION = "Wealth is assets that earn while you sleep.";
+  const BODY_TEXT = "This paragraph is page body text and must never reach Claude.";
+  const SUMMARY_HTML =
+    "<html><head><title>Looked Up Title | Site</title>" +
+    `<meta name="description" content="${DESCRIPTION}"></head>` +
+    `<body><p>${BODY_TEXT}</p></body></html>`;
+
+  it("criteria 1 and 2: a page save runs the lookup; Claude gets the client title plus the description, no body text", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, SUMMARY_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "How to Get Rich", tags: ["Product"] }));
+    mockNotion(record, { name: CLIENT, tags: [] });
+
+    await runInWaitUntil(pageJob({ clientTitle: CLIENT }));
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${ARTICLE}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    const claudeBody = seen[2]!.body as ClaudeBody;
+    expect(claudeBody.messages).toEqual([
+      { role: "user", content: `Title: ${CLIENT}\nDescription: ${DESCRIPTION}\nURL: ${ARTICLE}` },
+    ]);
+    expect(JSON.stringify(claudeBody)).not.toContain(BODY_TEXT);
+    expect(JSON.stringify(claudeBody)).not.toContain("Looked Up Title");
+    expect(seen[4]!.body).toEqual({
+      properties: { ...nameProp("How to Get Rich"), [PROPS.tags]: { multi_select: [{ id: "opt-product" }] } },
+    });
+    expect(logs()).toEqual([
+      expect.objectContaining({ event: "enrich", ok: true, source: "client", patched: true, claude: true, tags: 1 }),
+    ]);
+  });
+
+  it("criterion 1: with Claude failing, the looked-up title never replaces the client title", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, SUMMARY_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claude401());
+    mockNotion(record, { name: CLIENT, tags: [] });
+
+    await runInWaitUntil(pageJob({ clientTitle: CLIENT }));
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${ARTICLE}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+    ]);
+    // The Name stays the client title, so there's nothing to write and no patch.
+    expect(logs().filter((l) => l.event === "enrich")).toEqual([
+      expect.objectContaining({ ok: true, source: "client", patched: false, claude: false }),
+    ]);
+  });
+
+  it("criterion 2: an X save sends Claude the post text (x shape); no URL swap", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    const clientTitle = 'Naval on X: "How to Get Rich" / X';
+    mockOembed(record, xOembed("How to Get Rich<br>(without getting lucky):"));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "Naval: How to Build Wealth Without Luck", tags: ["AI"] }));
+    mockNotion(record, { name: clientTitle, tags: [] });
+
+    await runInWaitUntil(xJob({ clientTitle }));
+
+    expect(seen[0]!.url.startsWith(OEMBED)).toBe(true);
+    const claudeBody = seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody;
+    expect(claudeBody.messages).toEqual([
+      {
+        role: "user",
+        content: `X post by Naval (@naval): "How to Get Rich (without getting lucky):"\nURL: ${X_STORED}`,
+      },
+    ]);
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: {
+        ...nameProp("Naval: How to Build Wealth Without Luck"),
+        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] },
+      },
+    });
+  });
+
+  it("criterion 4: a no-text X post with a client title gets the titled shape with the client title", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    const clientTitle = 'Aaron Levie on X: "https://t.co/Lv1eB0x" / X';
+    mockOembed(record, xOembed('<a href="https://t.co/Lv1eB0x">https://t.co/Lv1eB0x</a>'));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "Aaron Levie: Box on AI Agents", tags: ["AI"] }));
+    mockNotion(record, { name: clientTitle, tags: [] });
+
+    await runInWaitUntil(xJob({ clientTitle }));
+
+    expect(seen[0]!.url.startsWith(OEMBED)).toBe(true);
+    const claudeBody = seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody;
+    expect(claudeBody.messages).toEqual([{ role: "user", content: `Title: ${clientTitle}\nURL: ${X_STORED}` }]);
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { ...nameProp("Aaron Levie: Box on AI Agents"), [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] } },
+    });
+    const line = logs()[0]!;
+    expect(line).toMatchObject({ event: "enrich", ok: true, claude: true, tags: 1 });
+    expect(line).not.toHaveProperty("reason");
+  });
+
+  // Real wait: AbortSignal.timeout runs on workerd's clock, which fake timers don't drive.
+  it("criterion 3: a lookup timeout still patches, with Claude on the client title and URL", { timeout: 15_000 }, async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    network.use(
+      http.get(ARTICLE, async ({ request }) => {
+        await record(request);
+        return new Promise<Response>(() => {});
+      }),
+    );
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "How to Get Rich", tags: ["Product"] }));
+    mockNotion(record, { name: CLIENT, tags: [] });
+
+    await runInWaitUntil(pageJob({ clientTitle: CLIENT }));
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${ARTICLE}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    // The lookup gave up (4 s fetch timeout or the 5 s stage cap) before Claude ran.
+    const claudeReq = seen[2]!;
+    expect(claudeReq.at).toBeGreaterThanOrEqual(3900);
+    expect(claudeReq.at).toBeLessThan(5500);
+    expect((claudeReq.body as ClaudeBody).messages).toEqual([
+      { role: "user", content: `Title: ${CLIENT}\nURL: ${ARTICLE}` },
+    ]);
+    expect(seen[4]!.body).toEqual({
+      properties: { ...nameProp("How to Get Rich"), [PROPS.tags]: { multi_select: [{ id: "opt-product" }] } },
+    });
+    expect(logs()).toEqual([
+      expect.objectContaining({ event: "enrich", ok: true, source: "client", patched: true, claude: true }),
+    ]);
   });
 });

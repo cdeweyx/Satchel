@@ -106,6 +106,7 @@ Stored URL: canonical, host lowercased, `m.` and `mobile.` dropped, `www.` as gi
 - Status: revised round 1, 2026-11-07: fxtwitter and iTunes cut.
 - Status: revised in build, 2026-11-08 (SAT-12): a null from a media oEmbed falls through to the page lookup (TikTok's oEmbed stopped returning titles).
 - Status: decided (user review, 2026-11-07).
+- Status: revised in build, 2026-11-08 (SAT-41): a save with a client title still runs the lookup, only to give Claude the page description (or the X post text); the client title stays the Name candidate.
 
 ### D-4 Fix the /save contract, CORS and auth
 
