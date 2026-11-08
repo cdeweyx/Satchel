@@ -1,0 +1,95 @@
+{
+  "_about": "Expected dedupe filters, keyed by the client's URL. Written by hand from docs/tech-plan.md (section 6 and Rules in full > Canonicalization (D-5)): for the bare and www. host forms, equals, equals + '/', starts_with + '?', starts_with + '#', then equals raw (9 clauses, one flat or). X is one contains '/status/<id>'. Lead rulings C4 (always 9), C5 (a root form's slash clause drops the slash) and the D-2 build revision (a form that already has a query uses starts_with + '&' instead of '?'). Never captured from the code.",
+  "plain": {
+    "https://www.example.com/blog/post/?utm_source=news#top": {
+      "or": [
+        { "property": "URL", "url": { "equals": "https://example.com/blog/post" } },
+        { "property": "URL", "url": { "equals": "https://example.com/blog/post/" } },
+        { "property": "URL", "url": { "starts_with": "https://example.com/blog/post?" } },
+        { "property": "URL", "url": { "starts_with": "https://example.com/blog/post#" } },
+        { "property": "URL", "url": { "equals": "https://www.example.com/blog/post" } },
+        { "property": "URL", "url": { "equals": "https://www.example.com/blog/post/" } },
+        { "property": "URL", "url": { "starts_with": "https://www.example.com/blog/post?" } },
+        { "property": "URL", "url": { "starts_with": "https://www.example.com/blog/post#" } },
+        { "property": "URL", "url": { "equals": "https://www.example.com/blog/post/?utm_source=news#top" } }
+      ]
+    }
+  },
+  "nytimes": {
+    "https://m.nytimes.com/2025/01/27/technology/deepseek.html": {
+      "or": [
+        { "property": "URL", "url": { "equals": "https://nytimes.com/2025/01/27/technology/deepseek.html" } },
+        { "property": "URL", "url": { "equals": "https://nytimes.com/2025/01/27/technology/deepseek.html/" } },
+        { "property": "URL", "url": { "starts_with": "https://nytimes.com/2025/01/27/technology/deepseek.html?" } },
+        { "property": "URL", "url": { "starts_with": "https://nytimes.com/2025/01/27/technology/deepseek.html#" } },
+        { "property": "URL", "url": { "equals": "https://www.nytimes.com/2025/01/27/technology/deepseek.html" } },
+        { "property": "URL", "url": { "equals": "https://www.nytimes.com/2025/01/27/technology/deepseek.html/" } },
+        { "property": "URL", "url": { "starts_with": "https://www.nytimes.com/2025/01/27/technology/deepseek.html?" } },
+        { "property": "URL", "url": { "starts_with": "https://www.nytimes.com/2025/01/27/technology/deepseek.html#" } },
+        { "property": "URL", "url": { "equals": "https://m.nytimes.com/2025/01/27/technology/deepseek.html" } }
+      ]
+    },
+    "https://www.nytimes.com/2025/01/27/technology/deepseek.html": {
+      "or": [
+        { "property": "URL", "url": { "equals": "https://nytimes.com/2025/01/27/technology/deepseek.html" } },
+        { "property": "URL", "url": { "equals": "https://nytimes.com/2025/01/27/technology/deepseek.html/" } },
+        { "property": "URL", "url": { "starts_with": "https://nytimes.com/2025/01/27/technology/deepseek.html?" } },
+        { "property": "URL", "url": { "starts_with": "https://nytimes.com/2025/01/27/technology/deepseek.html#" } },
+        { "property": "URL", "url": { "equals": "https://www.nytimes.com/2025/01/27/technology/deepseek.html" } },
+        { "property": "URL", "url": { "equals": "https://www.nytimes.com/2025/01/27/technology/deepseek.html/" } },
+        { "property": "URL", "url": { "starts_with": "https://www.nytimes.com/2025/01/27/technology/deepseek.html?" } },
+        { "property": "URL", "url": { "starts_with": "https://www.nytimes.com/2025/01/27/technology/deepseek.html#" } },
+        { "property": "URL", "url": { "equals": "https://www.nytimes.com/2025/01/27/technology/deepseek.html" } }
+      ]
+    },
+    "https://nytimes.com/2025/01/27/technology/deepseek.html": {
+      "or": [
+        { "property": "URL", "url": { "equals": "https://nytimes.com/2025/01/27/technology/deepseek.html" } },
+        { "property": "URL", "url": { "equals": "https://nytimes.com/2025/01/27/technology/deepseek.html/" } },
+        { "property": "URL", "url": { "starts_with": "https://nytimes.com/2025/01/27/technology/deepseek.html?" } },
+        { "property": "URL", "url": { "starts_with": "https://nytimes.com/2025/01/27/technology/deepseek.html#" } },
+        { "property": "URL", "url": { "equals": "https://www.nytimes.com/2025/01/27/technology/deepseek.html" } },
+        { "property": "URL", "url": { "equals": "https://www.nytimes.com/2025/01/27/technology/deepseek.html/" } },
+        { "property": "URL", "url": { "starts_with": "https://www.nytimes.com/2025/01/27/technology/deepseek.html?" } },
+        { "property": "URL", "url": { "starts_with": "https://www.nytimes.com/2025/01/27/technology/deepseek.html#" } },
+        { "property": "URL", "url": { "equals": "https://nytimes.com/2025/01/27/technology/deepseek.html" } }
+      ]
+    }
+  },
+  "root": {
+    "https://example.com": {
+      "or": [
+        { "property": "URL", "url": { "equals": "https://example.com/" } },
+        { "property": "URL", "url": { "equals": "https://example.com" } },
+        { "property": "URL", "url": { "starts_with": "https://example.com/?" } },
+        { "property": "URL", "url": { "starts_with": "https://example.com/#" } },
+        { "property": "URL", "url": { "equals": "https://www.example.com/" } },
+        { "property": "URL", "url": { "equals": "https://www.example.com" } },
+        { "property": "URL", "url": { "starts_with": "https://www.example.com/?" } },
+        { "property": "URL", "url": { "starts_with": "https://www.example.com/#" } },
+        { "property": "URL", "url": { "equals": "https://example.com" } }
+      ]
+    }
+  },
+  "query": {
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ&si=abc123": {
+      "or": [
+        { "property": "URL", "url": { "equals": "https://youtube.com/watch?v=dQw4w9WgXcQ" } },
+        { "property": "URL", "url": { "equals": "https://youtube.com/watch?v=dQw4w9WgXcQ/" } },
+        { "property": "URL", "url": { "starts_with": "https://youtube.com/watch?v=dQw4w9WgXcQ&" } },
+        { "property": "URL", "url": { "starts_with": "https://youtube.com/watch?v=dQw4w9WgXcQ#" } },
+        { "property": "URL", "url": { "equals": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" } },
+        { "property": "URL", "url": { "equals": "https://www.youtube.com/watch?v=dQw4w9WgXcQ/" } },
+        { "property": "URL", "url": { "starts_with": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&" } },
+        { "property": "URL", "url": { "starts_with": "https://www.youtube.com/watch?v=dQw4w9WgXcQ#" } },
+        { "property": "URL", "url": { "equals": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&si=abc123" } }
+      ]
+    }
+  },
+  "x": {
+    "https://twitter.com/jack/status/20?s=46&t=abc": {
+      "property": "URL",
+      "url": { "contains": "/status/20" }
+    }
+  }
+}

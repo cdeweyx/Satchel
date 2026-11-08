@@ -5,16 +5,8 @@ import type { HealthResponse } from "../src/contract";
 import { health } from "../src/health";
 import worker from "../src/index";
 
-// vi.mock in this pool calls AsyncLocalStorage.prototype.disable(), which workerd doesn't
-// implement ("asyncLocalStorage.disable() is not implemented"). Vitest only calls it as a Node
-// perf optimization, so a no-op is safe. Runs before the imports above are evaluated.
-await vi.hoisted(async () => {
-  const { AsyncLocalStorage } = await import("node:async_hooks");
-  AsyncLocalStorage.prototype.disable = function () {};
-});
-
 // Criterion 5 only: health() is a spy that calls through to the real stub. Every other test
-// gets the real stub (and the real handleSave stub); criterion 5 overrides one call at a time.
+// gets the real stub (and the real handleSave); criterion 5 overrides one call at a time.
 vi.mock("../src/health", { spy: true });
 
 const KEY = "test-satchel-key"; // vitest.config.ts binds this fake value
@@ -111,11 +103,12 @@ describe("criterion 1: every response is JSON with ok and open CORS", () => {
       body: { ok: false, error: "method_not_allowed" },
     },
     {
-      // A valid, authorized save reaches the real handleSave stub, which answers 500.
-      name: "500 from handleSave stub",
+      // A valid, authorized save reaches the real handleSave, whose Notion call hits the MSW
+      // catch-all and answers 502.
+      name: "502 from handleSave (Notion unreachable)",
       req: () => post(saveBody(valid)),
-      status: 500,
-      body: { ok: false, error: "internal" },
+      status: 502,
+      body: { ok: false, error: "notion_unreachable" },
     },
     {
       name: "500 internal from the top-level catch",
@@ -164,7 +157,7 @@ describe("criterion 2: x-satchel-key on /save", () => {
 
   it("the right key gets past auth to validation and handleSave", async () => {
     await expectJson(await call(post("not json")), 400, { ok: false, error: "invalid_body" });
-    await expectJson(await call(post(saveBody(valid))), 500, { ok: false, error: "internal" });
+    await expectJson(await call(post(saveBody(valid))), 502, { ok: false, error: "notion_unreachable" });
   });
 
   describe("fails closed when SATCHEL_KEY is unset or blank", () => {
@@ -219,7 +212,8 @@ describe("criterion 3: body validation on POST /save", () => {
     await expectJson(await call(post(body)), 400, { ok: false, error });
   });
 
-  // Valid bodies pass validation and reach the handleSave stub (500 internal), not a 400.
+  // Valid bodies pass validation and reach handleSave, whose Notion call hits the MSW
+  // catch-all (502 notion_unreachable), not a 400.
   it.each([
     ["each status: later", { url: "https://example.com", status: "later" }],
     ["each status: read", { url: "https://example.com", status: "read" }],
@@ -229,7 +223,7 @@ describe("criterion 3: body validation on POST /save", () => {
     ["url padded with spaces", { url: "  https://example.com  ", status: "later" }],
     ["url exactly 2000 chars", { url: `https://example.com/${"a".repeat(1980)}`, status: "later" }],
   ])("%s passes validation", async (_label, fields) => {
-    await expectJson(await call(post(saveBody(fields))), 500, { ok: false, error: "internal" });
+    await expectJson(await call(post(saveBody(fields))), 502, { ok: false, error: "notion_unreachable" });
   });
 });
 
