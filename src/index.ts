@@ -1,6 +1,9 @@
+import { canonicalize } from "./canonical";
 import { type ErrorCode, json } from "./contract";
 import { health } from "./health";
+import { logEvent } from "./log";
 import { handleSave } from "./save";
+import { lookupTitle } from "./title";
 
 // The router (D-4, "Rules in full" > Contract). Every response is JSON with `ok` and open
 // CORS via json(), except the 204 preflight, which has no body.
@@ -9,6 +12,8 @@ type KeyState = "none" | "wrong" | "ok";
 
 const STATUSES = new Set(["later", "read", "favorite"]);
 const MAX_URL_LENGTH = 2000;
+// The debug route's lookup cap, the same 5 s as enrich's lookup stage.
+const DEBUG_LOOKUP_MS = 5000;
 
 // CORS preflight: 204, no body, no key needed. /health needs one too, since the extension's
 // Test button sends a keyed GET from a chrome-extension:// origin.
@@ -57,7 +62,12 @@ async function validateSave(req: Request): Promise<ErrorCode | null> {
   if (typeof url !== "string" || url.trim() === "") return "invalid_body";
   if (title !== undefined && typeof title !== "string") return "invalid_body";
   if (typeof status !== "string" || !STATUSES.has(status)) return "invalid_body";
+  return validateUrl(url);
+}
 
+// Shared by /save and /debug/title, in this order: length, then parse, then scheme.
+// `url` is a non-blank string; the caller has already returned invalid_body otherwise.
+function validateUrl(url: string): ErrorCode | null {
   const trimmed = url.trim();
   if (trimmed.length > MAX_URL_LENGTH) return "url_too_long";
   let parsed: URL;
@@ -78,6 +88,25 @@ async function save(req: Request, env: Env, ctx: ExecutionContext): Promise<Resp
   return await handleSave(req, env, ctx);
 }
 
+// GET /debug/title?url= (M1 debug route, risk 1): runs the real title lookup on the canonical
+// URL and returns the raw result, so egress blocking shows up from curl. Key-gated like /save.
+// Never logs the key or the URL.
+async function debugTitle(req: Request, env: Env): Promise<Response> {
+  if ((await keyState(req, env)) !== "ok") return fail(401, "unauthorized");
+  const url = new URL(req.url).searchParams.get("url");
+  if (url === null || url.trim() === "") return fail(400, "invalid_body");
+  const invalid = validateUrl(url);
+  if (invalid) return fail(400, invalid);
+
+  const { stored, kind } = canonicalize(url);
+  const started = Date.now();
+  const result = await lookupTitle(stored, kind, AbortSignal.timeout(DEBUG_LOOKUP_MS));
+  const ms = Date.now() - started;
+  const source = result.source ?? "fallback";
+  logEvent("debug_title", { kind, source, ms });
+  return json(200, { ok: true, kind, stored, ...result, source, ms });
+}
+
 export default {
   async fetch(req, env, ctx): Promise<Response> {
     try {
@@ -92,6 +121,10 @@ export default {
         if (req.method !== "GET") return fail(405, "method_not_allowed", { Allow: "GET, OPTIONS" });
         const result = await health(env, await keyState(req, env));
         return json(result.status, result.body);
+      }
+      if (pathname === "/debug/title") {
+        if (req.method !== "GET") return fail(405, "method_not_allowed", { Allow: "GET" });
+        return await debugTitle(req, env);
       }
       return fail(404, "not_found");
     } catch {
