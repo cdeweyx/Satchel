@@ -388,6 +388,7 @@ describe("SAT-43: an X Article gets its text from the Twitterbot page", () => {
       author: "Aaron Levie",
       handle: "levie",
       source: "x-oembed",
+      article: true, // SAT-45: added to this SAT-43 assertion
       bytesRead: bytes(ARTICLE_OEMBED) + bytes(ARTICLE_PAGE),
     });
     expect(seen.map((s) => [s.url.split("?")[0], s.userAgent])).toEqual([
@@ -478,6 +479,45 @@ describe("SAT-43: an X Article gets its text from the Twitterbot page", () => {
   });
 });
 
+// SAT-45: lookupX marks the Article page path `article: true` so enrich sends Claude the titled
+// shape. Nothing else carries the flag.
+describe("SAT-45: only the Article page path is marked article", () => {
+  it("the Levie Article: article true, with the article title as the post text", async () => {
+    network.use(
+      http.get(OEMBED, () => jsonText(ARTICLE_OEMBED)),
+      http.get(ARTICLE_PAGE_URL, () => htmlText(ARTICLE_PAGE)),
+    );
+
+    const result = await lookupX(ARTICLE.id, signal());
+
+    expect(result).toMatchObject({ article: true, description: "The never-ending last mile of work" });
+  });
+
+  it.each([
+    ["a post with text of its own (oEmbed)", () => [http.get(OEMBED, () => jsonText(NAVAL_OEMBED))], ID],
+    [
+      "the Twitterbot fallback",
+      () => [http.get(OEMBED, () => htmlText(NOT_FOUND_HTML, 404)), http.get(PAGE, () => htmlText(NAVAL_PAGE))],
+      ID,
+    ],
+    [
+      "a link-only post the page doesn't describe",
+      () => [
+        http.get(OEMBED, () => jsonText(ARTICLE_OEMBED)),
+        http.get(ARTICLE_PAGE_URL, () => htmlText(xPage(ARTICLE.page.ogTitle, ""))),
+      ],
+      ARTICLE.id,
+    ],
+  ])("%s: no article flag", async (_label, handlers, id) => {
+    network.use(...handlers());
+
+    const result = await lookupX(id, signal());
+
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty("article");
+  });
+});
+
 describe("SAT-43: pageText", () => {
   it("prefers og:title's quoted part when og:description is a cut of it (trailing … stripped)", () => {
     const title = 'Aaron Levie on X: "The never-ending last mile of work" / X';
@@ -485,10 +525,12 @@ describe("SAT-43: pageText", () => {
     expect(pageText(title, "The never-ending last…")).toBe("The never-ending last mile of work");
   });
 
-  it("uses og:description, ellipsis stripped, when it isn't a cut of the quoted title", () => {
-    expect(pageText('Aaron Levie on X: "Short" / X', "A longer summary of the article…")).toBe(
-      "A longer summary of the article",
-    );
+  // SAT-45 changed this SAT-43 test: a quoted og:title now wins over a different og:description.
+  it("SAT-45: the quoted og:title wins even when og:description is a different summary", () => {
+    expect(pageText('Aaron Levie on X: "Short" / X', "A longer summary of the article…")).toBe("Short");
+  });
+
+  it("uses og:description, ellipsis stripped, when og:title has no quoted part", () => {
     expect(pageText("Aaron Levie (@levie) on X", "The never-ending last mile of work…")).toBe(
       "The never-ending last mile of work",
     );

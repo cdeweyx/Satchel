@@ -119,11 +119,15 @@ function collapse(text: string | undefined): string | undefined {
 // description when there is one (none for a no-text X post, whose "text" is only links). A
 // failed lookup leaves the client title and URL. Never page body text: the description is the
 // page's meta or og description, or the X post text.
+// SAT-45: an X Article's text is its title (lookupX marks it `article`), so it's `titled` with
+// that title, like a page title: Claude cleans it instead of writing a gist. That holds with a
+// client title too, the same way the `x` shape it replaces ignores one.
 export function toClaudeInput(job: EnrichJob, lookup: LookupResult): ClaudeInput {
   const url = job.storedUrl;
   const text = collapse(lookup.description);
   const author = collapse(lookup.author);
   const client = job.clientTitle;
+  if (job.kind === "x" && lookup.article && text) return { shape: "titled", title: text, url };
   if (job.kind === "x" && author && text && (client === undefined || !isNoTextX(lookup))) {
     return { shape: "x", author, ...(lookup.handle ? { handle: lookup.handle } : {}), text, url };
   }

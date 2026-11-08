@@ -17,6 +17,7 @@ export type LookupResult = {
   handle?: string;
   url?: string;
   source: "client" | "x-oembed" | "x-twitterbot" | "media-oembed" | "page" | "fallback";
+  article?: true; // SAT-45: an X Article's title, from lookupX (see XTitle)
   bytesRead: number;
 };
 
