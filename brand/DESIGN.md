@@ -59,7 +59,7 @@ The icon is the same die with just an S. It's built per size so it holds up at 1
 - **32 px**: outer rule 2 px (corner 6), inner rule 1 px at 4 px (corner 3.5), S at 18 px.
 - **16 px**: one 1.5 px rule (corner 3.25), S at 11 px. The inner rule drops out.
 
-PNGs live in `extension/icons/icon-{16,32,48,128}.png`. The Shortcut uses the bag glyph on Shortcuts' dark blue, the closest it offers to stamp blue (`shortcut/glyph.txt`).
+Unlike the wordmark, the icon's plate is filled with flax inside the outer rule, so it reads as a small flax stamp on light and dark toolbars alike. Transparent, the blue die was 2.21:1 on dark saddle. Filled, the plate is 15.34:1 against dark saddle and the blue sits on flax at 6.92:1. PNGs live in `extension/icons/icon-{16,32,48,128}.png`. The Shortcut uses the bag glyph on Shortcuts' dark blue, the closest it offers to stamp blue (`shortcut/glyph.txt`).
 
 ## The save beat
 
