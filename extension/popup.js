@@ -301,9 +301,13 @@ function onKey(event) {
 
 // ---- start ----
 
+// Only web pages have a site name. On chrome://, chrome-extension://, file:// or about:
+// the "hostname" is a page name or the extension's ID, so the line stays empty.
 function domainOf(url) {
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    return u.hostname.replace(/^www\./, "");
   } catch {
     return "";
   }

@@ -452,6 +452,23 @@ describe("at rest", () => {
     await press("l");
     expect(messages()).toEqual([{ type: "save", url: "https://example.com/x", status: "later" }]);
   });
+
+  it("shows the site name, without www., for an https tab", async () => {
+    await open({ tab: { url: "https://www.example.com/x", title: "X" } });
+    expect($("domain").textContent).toBe("example.com");
+  });
+
+  it.each([
+    ["chrome://", "chrome://extensions/"],
+    ["chrome-extension://", "chrome-extension://mgmdmpjmkmljmpnjgmnoipngeckphfpo/options.html"],
+    ["file://", "file:///Users/me/notes.html"],
+    ["about:", "about:blank"],
+  ])("shows no domain on a %s tab, just the title", async (_scheme, url) => {
+    await open({ tab: { url, title: "Some Page" } });
+    expect($("popup").getAttribute("data-state")).toBe("rest");
+    expect($("domain").textContent).toBe("");
+    expect($("title").textContent).toBe("Some Page");
+  });
 });
 
 // ---------- L: send to inbox ----------
