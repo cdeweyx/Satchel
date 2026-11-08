@@ -59,6 +59,11 @@ describe("SAT-48 previewBlock: lookup result to the one block, or none", () => {
     expect(previewBlock(x("pic.twitter.com/AbC123"))).toBeNull();
     expect(previewBlock(x("box.com/blog/ai-agents-a… pic.twitter.com/b"))).toBeNull();
     expect(previewBlock(x("  "))).toBeNull();
+    // Review fix: what's left after the links has no letter or digit.
+    expect(previewBlock(x("— https://t.co/a"))).toBeNull();
+    expect(previewBlock(x("👇 https://t.co/a"))).toBeNull();
+    expect(previewBlock(x("👇 2 https://t.co/a"))).toEqual(paragraph("👇 2"));
+    expect(previewBlock(x("Ça va https://t.co/a"))).toEqual(paragraph("Ça va"));
     expect(previewBlock(x())).toBeNull();
   });
 

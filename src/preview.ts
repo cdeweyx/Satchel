@@ -38,9 +38,11 @@ export const X_LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-
 const X_LINK_TOKEN = new RegExp(String.raw`(?<!\S)${X_LINK}`, "gi");
 
 // SAT-52: an X post's text for its page body: every link (a whole whitespace-separated token)
-// removed, whitespace collapsed, trimmed. "" when the post is only links.
+// removed, whitespace collapsed, trimmed. "" when what's left has no letter or digit (only
+// links, or links plus punctuation or emoji, like "— https://t.co/a" or "👇 https://t.co/a").
 export function xPostText(text: string | null | undefined): string {
-  return (text ?? "").replace(X_LINK_TOKEN, " ").replace(/\s+/g, " ").trim();
+  const clean = (text ?? "").replace(X_LINK_TOKEN, " ").replace(/\s+/g, " ").trim();
+  return /[\p{L}\p{N}]/u.test(clean) ? clean : "";
 }
 
 // Whitespace collapsed; past `max` code points, cut at the last word boundary and end in "…".

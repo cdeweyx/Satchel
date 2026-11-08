@@ -2167,6 +2167,22 @@ describe("SAT-48: the new row's page body gets the preview image or the summary"
     expect(logs()).toEqual([expect.objectContaining({ event: "enrich", claude: false, reason: "no_text_x" })]);
   });
 
+  it.each([
+    ["a dash", "— "],
+    ["an emoji", "👇 "],
+  ])("SAT-52 review fix: X post whose text past its link is only %s: no append", async (_label, lead) => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed(`${lead}<a href="https://t.co/a">https://t.co/a</a>`));
+    mockNotion(record, { name: `X post ${X_ID}` });
+    mockBody(record);
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map(route)).toContain(`PATCH ${PAGE_URL}`);
+    expect(appends(seen)).toEqual([]);
+  });
+
   describe("SAT-52: an X Article (SAT-45)", () => {
     const A = JSON.parse(articleText) as {
       storedUrl: string;
