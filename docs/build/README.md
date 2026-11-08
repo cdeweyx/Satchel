@@ -47,7 +47,13 @@ npm run deploy                 # scripts/deploy.sh
 npm run deploy -- --dry-run    # extra args pass through to wrangler deploy
 ```
 
-`scripts/deploy.sh` greps the three Worker secrets into a `mktemp` file (mode 600, removed on exit), reads the two IDs, and runs `npx wrangler deploy --secrets-file <tmp> --var NOTION_DATABASE_ID:<id> --var NOTION_DATA_SOURCE_ID:<id>`. It prints key names, never values. `SATCHEL_SECRETS_FILE` overrides the file path (use a fake file for proofs). `wrangler secret bulk` is for rotating a secret only.
+`scripts/deploy.sh` greps the three Worker secrets into a `mktemp` file (mode 600, removed on exit), reads the two IDs, and runs `npx wrangler deploy --secrets-file <tmp> --var NOTION_DATABASE_ID:<id> --var NOTION_DATA_SOURCE_ID:<id>`. It prints key names, never values. `SATCHEL_SECRETS_FILE` overrides the file path (use a fake file for proofs). `wrangler secret bulk` is for rotating a secret only, and only ever from the filtered three keys, never the whole secrets file (it also holds the two IDs and `SATCHEL_URL`):
+
+```sh
+tmp=$(mktemp) && chmod 600 "$tmp" && grep -E '^(NOTION_TOKEN|ANTHROPIC_API_KEY|SATCHEL_KEY)=' ~/.config/satchel/secrets.env > "$tmp" && npx wrangler secret bulk "$tmp"; rm -f "$tmp"
+```
+
+The deployed Worker URL isn't in the repo (it goes public in M6); it's `SATCHEL_URL` in the secrets file.
 
 Wrangler auth, either:
 
