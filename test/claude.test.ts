@@ -138,6 +138,36 @@ describe("request shape", () => {
     expect(prompt.endsWith(`Allowed tags: ${TAGS.join(", ")}`)).toBe(true);
   });
 
+  it("system prompt tags fewer and more specific: one by default, broad tags gated, no source or format tags", () => {
+    const prompt = systemPrompt(TAGS);
+    expect(prompt).toContain("- Pick one tag by default. Add a second or third only when the piece is substantially about that topic too. Never more than 3.");
+    expect(prompt).toContain("- Prefer the most specific tag that fits.");
+    expect(prompt).toContain(
+      "- Use a broad tag (Tech, Thinking, Creativity, Growth, Mindset, Business, Productivity, Social Media) only when the piece is about that broad topic itself.",
+    );
+    expect(prompt).toContain(
+      "- Tech is only for broadly tech pieces. Never add Tech alongside AI or Engineering for an AI or engineering piece.",
+    );
+    expect(prompt).toContain("- Never tag by source or format: a link from X isn't Social Media, a video isn't Video.");
+    expect(prompt).toContain("Never invent a tag. If nothing fits, pick the single closest one.");
+    expect(prompt).not.toContain("Pick 1 to 3 tags");
+  });
+
+  it("system prompt holds exactly the three examples and none of the four held-out titles", () => {
+    const prompt = systemPrompt(TAGS);
+    const examples = prompt.slice(prompt.indexOf("Examples (title → tags):"), prompt.indexOf("Allowed tags: "));
+    expect(examples.trim().split("\n")).toEqual([
+      "Examples (title → tags):",
+      "- The Art of Vibe Design → Design",
+      "- Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
+      "- How AI Agents & Claude Skills Work → AI",
+    ]);
+    // Held out for the lead's live re-check (SAT-38): the prompt must not carry their answers.
+    for (const heldOut of ["Levie", "last mile", "Good Retention", "Lenny", "Harder to Find", "Asterisk", "Leadership Lessons"]) {
+      expect(prompt).not.toContain(heldOut);
+    }
+  });
+
   it("passes the caller's signal: an aborted signal stops the call and returns null", async () => {
     let hits = 0;
     network.use(
