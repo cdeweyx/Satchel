@@ -23,11 +23,17 @@ export const DEADLINE_MS = 22_000;
 
 export type EnrichOptions = { deadlineMs?: number };
 
-// A media-only X post, tested on the post text alone (never the `author: ` title, so a
-// real post ending in "...: pic.twitter.com/x" keeps its title). oEmbed shows the image as
-// a pic.twitter.com link; Twitterbot's og:description can be just the t.co link.
-const MEDIA_ONLY_OEMBED = /^pic\.twitter\.com\/\S+$/;
-const MEDIA_ONLY_TWITTERBOT = /^(?:pic\.twitter\.com\/\S+|https:\/\/t\.co\/\S+)$/;
+// An X post with no text of its own: only media or links (SAT-12, SAT-37). Tested on the
+// post text alone (never the `author: ` title, so a real post ending in "...: pic.twitter.com/x"
+// keeps its title). A link reads as X shows it: a full URL (t.co or any other, Twitterbot's
+// og:description), a pic.twitter.com media link, or a display URL (host plus a path, or cut
+// with "…"). A display URL needs the path or ellipsis so a one-word post like "Node.js" stays text.
+const LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/\S*|…))`;
+const NO_POST_TEXT = new RegExp(`^${LINK}(?: ${LINK})*$`, "i");
+
+// SAT-37: with no post text Claude can describe the empty post instead of titling it
+// ("Shares a link with no accompanying text"). Such a title is dropped for the fallback Name.
+const NO_TEXT_TITLE = /\b(shares?|posted|link)\b.*\b(no|without)\b.*\b(text|caption|comment)/i;
 
 type Stage = "schema" | "reread" | "patch";
 
@@ -40,17 +46,20 @@ export function usableTitle(title: string | null | undefined, storedUrl: string)
   return clean;
 }
 
-// R2: an X lookup whose post text is only the media link has no title worth writing.
-export function isMediaOnlyX(lookup: LookupResult): boolean {
-  const text = (lookup.description ?? "").replace(/\s+/g, " ").trim();
-  if (lookup.source === "x-oembed") return MEDIA_ONLY_OEMBED.test(text);
-  if (lookup.source === "x-twitterbot") return MEDIA_ONLY_TWITTERBOT.test(text);
-  return false;
+// R2: an X lookup whose post text is only media or links has no title worth writing.
+export function isNoTextX(lookup: LookupResult): boolean {
+  if (lookup.source !== "x-oembed" && lookup.source !== "x-twitterbot") return false;
+  return NO_POST_TEXT.test((lookup.description ?? "").replace(/\s+/g, " ").trim());
 }
 
 // The looked-up title for Name purposes, after R2 hygiene.
 function lookedUpTitle(lookup: LookupResult, storedUrl: string): string | null {
-  return isMediaOnlyX(lookup) ? null : usableTitle(lookup.title, storedUrl);
+  return isNoTextX(lookup) ? null : usableTitle(lookup.title, storedUrl);
+}
+
+// Claude's title for Name purposes: dropped when it describes a no-text X post's emptiness.
+function claudeTitle(title: string | null, lookup: LookupResult): string | null {
+  return title !== null && isNoTextX(lookup) && NO_TEXT_TITLE.test(title) ? null : title;
 }
 
 // R4: the Name's plain text, joined across its rich-text runs. Null when the shape is off,
@@ -110,10 +119,12 @@ function collapse(text: string | undefined): string | undefined {
 
 // What Claude sees (D-8, "Rules in full" > Claude request). A client title skips lookup, so
 // Claude gets that title and the URL only. Otherwise an X post with author and text is the
-// `x` shape, a usable looked-up title is `titled`, and anything else is `untitled`.
+// `x` shape, a usable looked-up title is `titled`, and anything else is `untitled`. An X post
+// with no text of its own is `untitled` with the URL only, never the link as fake post text.
 export function toClaudeInput(job: EnrichJob, lookup: LookupResult): ClaudeInput {
   const url = job.storedUrl;
   if (job.clientTitle !== undefined) return { shape: "titled", title: job.clientTitle, url };
+  if (isNoTextX(lookup)) return { shape: "untitled", url };
   const text = collapse(lookup.description);
   const author = collapse(lookup.author);
   if (job.kind === "x" && author && text) {
@@ -218,7 +229,8 @@ export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {})
     const props: Properties = {};
 
     // R2: Claude's title gets the same hygiene as a looked-up one; empty means none.
-    const name = usableTitle(claude.title, job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
+    const name =
+      usableTitle(claudeTitle(claude.title, lookup), job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
     if (name !== null && nameUnchanged(job, currentName(page.properties))) {
       Object.assign(props, titleProp(name));
     }
