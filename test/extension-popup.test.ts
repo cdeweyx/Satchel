@@ -237,6 +237,9 @@ const statuses = () => sent.map((p) => p.message.status);
 const elapsed = () => (closedAt === null ? null : closedAt - openedAt);
 const flush = () => vi.advanceTimersByTimeAsync(0);
 const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+// popup.js's timings (SAT-47). The boundary tests below use literal times, so a change fails them.
+const FAVORITE_WINDOW_MS = 3000; // the favorite window after R
+const CLOSE_AFTER_MS = 600; // a good reply to close
 
 async function reply(index: number, value: unknown) {
   sent[index]!.resolve(value);
@@ -474,7 +477,7 @@ describe("at rest", () => {
 // ---------- L: send to inbox ----------
 
 describe("L sends later", () => {
-  it("sends {type: save, url, title, status: later}, fills the L keycap, stamps on ok and closes 350 ms after the reply", async () => {
+  it("sends {type: save, url, title, status: later}, fills the L keycap, stamps on ok and closes 600 ms after the reply", async () => {
     await open();
     await press("l");
     expect(messages()).toEqual([save("later")]);
@@ -491,10 +494,22 @@ describe("L sends later", () => {
     expect($("close").parent!.visibleText).toBe("esc close"); // no timing copy
     expect($("row-read").disabled).toBe(true);
 
-    await wait(349);
+    await wait(CLOSE_AFTER_MS - 1);
     expect(closedAt).toBeNull();
     await wait(1);
-    expect(elapsed()).toBe(350);
+    expect(elapsed()).toBe(CLOSE_AFTER_MS);
+  });
+
+  it("holds SAVED a beat: still open at 550 ms after the reply, closed by 650 ms", async () => {
+    await open();
+    await press("l");
+    await reply(0, { ok: true, id: "page-1" });
+    await wait(550);
+    expect(closedAt).toBeNull();
+    expect($("popup").getAttribute("data-state")).toBe("saved");
+    expect(isShown("stamp-later")).toBe(true);
+    await wait(100);
+    expect(closedAt).not.toBeNull();
   });
 
   it("a capital L works too", async () => {
@@ -533,10 +548,10 @@ describe("R sends read and offers Favorite", () => {
     expect($("close").parent!.visibleText).toBe("esc close"); // no how-it-works copy
   });
 
-  it("F within 1.5 s sends favorite after read, then stamps the Favorite row once both replies are ok", async () => {
+  it("F within the window sends favorite after read, then stamps the Favorite row once both replies are ok", async () => {
     await open();
     await press("r");
-    await wait(1400);
+    await wait(FAVORITE_WINDOW_MS - 100);
     await press("f");
     expect(statuses()).toEqual(["read", "favorite"]);
     expect(messages()[1]).toEqual(save("favorite"));
@@ -548,15 +563,15 @@ describe("R sends read and offers Favorite", () => {
     markNow();
     expect(isShown("stamp-favorite")).toBe(true);
     expect(isShown("stamp-read")).toBe(false);
-    await wait(350);
-    expect(elapsed()).toBe(350);
+    await wait(CLOSE_AFTER_MS);
+    expect(elapsed()).toBe(CLOSE_AFTER_MS);
   });
 
   it("the window ending closes: no F, the read's stamp, then close", async () => {
     await open();
     await press("r");
     await reply(0, { ok: true, id: "page-1" });
-    await wait(1499);
+    await wait(FAVORITE_WINDOW_MS - 1);
     expect(isShown("row-favorite")).toBe(true);
     expect(isShown("stamp-read")).toBe(false);
     expect(closedAt).toBeNull();
@@ -565,8 +580,8 @@ describe("R sends read and offers Favorite", () => {
     markNow();
     expect(isShown("row-favorite")).toBe(false);
     expect(isShown("stamp-read")).toBe(true);
-    await wait(350);
-    expect(elapsed()).toBe(350);
+    await wait(CLOSE_AFTER_MS);
+    expect(elapsed()).toBe(CLOSE_AFTER_MS);
     expect(statuses()).toEqual(["read"]);
   });
 
@@ -574,7 +589,33 @@ describe("R sends read and offers Favorite", () => {
     await open();
     await press("r");
     await reply(0, { ok: true, id: "page-1" });
-    await wait(1500);
+    await wait(FAVORITE_WINDOW_MS);
+    await press("f");
+    expect(statuses()).toEqual(["read"]);
+  });
+
+  // SAT-47: the window is 3 s. Literal times here, so a change to the window fails this.
+  it("F at 2.9 s still favorites", async () => {
+    await open();
+    await press("r");
+    await reply(0, { ok: true, id: "page-1" });
+    await wait(2900);
+    expect($("popup").getAttribute("data-state")).toBe("window");
+    expect(isShown("row-favorite")).toBe(true);
+    await press("f");
+    expect(statuses()).toEqual(["read", "favorite"]);
+    await reply(1, { ok: true, id: "page-1" });
+    expect(isShown("stamp-favorite")).toBe(true);
+  });
+
+  it("by 3.1 s the window has ended: Favorite gone, F sends nothing", async () => {
+    await open();
+    await press("r");
+    await reply(0, { ok: true, id: "page-1" });
+    await wait(3100);
+    expect($("popup").getAttribute("data-state")).not.toBe("window");
+    expect(isShown("row-favorite")).toBe(false);
+    expect(isShown("stamp-read")).toBe(true);
     await press("f");
     expect(statuses()).toEqual(["read"]);
   });
@@ -582,7 +623,7 @@ describe("R sends read and offers Favorite", () => {
   it("never shows SAVED before the read reply is ok", async () => {
     await open();
     await press("r");
-    await wait(1500); // window over, read still in flight
+    await wait(FAVORITE_WINDOW_MS); // window over, read still in flight
     expect(isShown("row-favorite")).toBe(false);
     expect(isShown("stamp-read")).toBe(false);
     await wait(3000);
@@ -592,8 +633,8 @@ describe("R sends read and offers Favorite", () => {
     await reply(0, { ok: true, id: "page-1" });
     markNow();
     expect(isShown("stamp-read")).toBe(true);
-    await wait(350);
-    expect(elapsed()).toBe(350);
+    await wait(CLOSE_AFTER_MS);
+    expect(elapsed()).toBe(CLOSE_AFTER_MS);
   });
 
   for (const [name, key] of [
@@ -609,8 +650,8 @@ describe("R sends read and offers Favorite", () => {
       markNow();
       expect(isShown("row-favorite")).toBe(false);
       expect(isShown("stamp-read")).toBe(true);
-      await wait(350);
-      expect(elapsed()).toBe(350);
+      await wait(CLOSE_AFTER_MS);
+      expect(elapsed()).toBe(CLOSE_AFTER_MS);
       expect(statuses()).toEqual(["read"]);
     });
   }
@@ -685,7 +726,7 @@ describe("failure", () => {
   it("a read that fails after the window closed shows the error, never the stamp", async () => {
     await open();
     await press("r");
-    await wait(1500);
+    await wait(FAVORITE_WINDOW_MS);
     await reply(0, { ok: false, error: "notion_conflict" });
     expect(isShown("stamp-read")).toBe(false);
     expect($("detail-read").textContent).toBe("notion_conflict");
