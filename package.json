@@ -10,7 +10,8 @@
     "types": "wrangler types --strict-vars=false",
     "dev": "wrangler dev",
     "deploy": "scripts/deploy.sh",
-    "prepare": "git config core.hooksPath .githooks"
+    "prepare": "git config core.hooksPath .githooks",
+    "backfill": "node --experimental-transform-types scripts/backfill.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.6.0",

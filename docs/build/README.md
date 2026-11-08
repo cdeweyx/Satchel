@@ -68,6 +68,22 @@ grep -E '^(NOTION_TOKEN|ANTHROPIC_API_KEY|SATCHEL_KEY|NOTION_DATABASE_ID|NOTION_
 
 Tests never use `.dev.vars`: `vitest.config.ts` binds fake values for all five keys.
 
+## Backlog backfill
+
+`scripts/backfill.ts` (SAT-32) runs the live rules over every non-trashed row: Claude's title (the `titled` shape with the current Name and canonical URL; an empty title or a failed call keeps the old one), tags, and the canonical URL. It imports `src/claude.ts`, `src/tags.ts` and `src/canonical.ts` unchanged, so it always uses the live prompt. Runs locally with Node, at most 3 Notion requests a second, no retries except waiting out a 429. Env comes from `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID` and `ANTHROPIC_API_KEY`, loaded with one filtered grep:
+
+```sh
+OUT=<workspace>/.context/backfill   # gitignored: these files are personal reading history
+tmp=$(mktemp) && chmod 600 "$tmp" && grep -E '^(NOTION_TOKEN|NOTION_DATA_SOURCE_ID|ANTHROPIC_API_KEY)=' ~/.config/satchel/secrets.env > "$tmp" \
+  && (set -a; . "$tmp"; set +a; npm run backfill -- --dry-run --out "$OUT"); rm -f "$tmp"
+```
+
+- `--dry-run --out <dir> [--tags=fill-empty|union]`: writes nothing to Notion. Writes `<dir>/plan.jsonl` (one line per row that changes: page id, archived flag, old and new title, tags and URL) and `<dir>/duplicates.json`, then prints 20 examples (title changes and tag fills, Inbox and Archived), the counts, Claude's cost from token usage, and elapsed time.
+- `--tags=fill-empty` (default): tags already on a row stay exactly as they are; only rows with zero tags get Claude's 1 to 3. `--tags=union`: every row keeps all its tags and gains Claude's missing ones while it has fewer than 3.
+- Duplicates (rows whose canonical URL or dedupe key matches another row's) are listed in `duplicates.json` and left out of the plan: never merged, deleted or written.
+- `--apply <dir>/plan.jsonl --out <dir>`: writes only the rows in the plan and only the properties that change (Name, Tags by option id through `guardTags`, URL). Each row's old values go to `<dir>/rollback.jsonl` before its write. A plan tag that doesn't map to a Tags option stops the run before anything is written.
+- `--rollback <dir>/rollback.jsonl`: writes the logged old values back, newest line first.
+
 ## Gates (the build stops for the user here)
 
 - M0: SAT-7, after SAT-6. User runs `wrangler login` (or adds the Cloudflare token to the secrets file), confirms the Worker URL, opens `/health` in the work Chrome profile and checks Developer mode is available. On a Notion 404, stop and add the Satchel connection via ••• → Connections.
