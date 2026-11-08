@@ -15,6 +15,7 @@ Source of truth: the [Final page](https://app.paper.design/file/01M6WXXRTZF9VAQA
 | Stamp blue | `--satchel-accent` | `#2F4DA0` | `#8AA2E6` | The mark, a pressed keycap, the SAVED impression. Nothing else. |
 | Brass | `--satchel-favorite` | `#B5883A` | `#B5883A` | The star, once it's set |
 | Error | `--satchel-danger` | `#1E1A16` | `#EDE7DD` | Error text. It's the ink, never red. |
+| Paper | `--satchel-paper` | `#FFFFFF` | (unused) | The keycap's lift, light mode only |
 
 Contrast against the ground (WCAG 2.2):
 
@@ -52,6 +53,8 @@ All three are OFL and bundled as latin woff2 in `extension/fonts/` with each fam
 - SATCHEL in Besley 800 at 52 px, tracking 0.04em, 30 px in from each side, 14 px from the top and 12 px from the bottom. The letters are outlined to paths, so the mark needs no font.
 
 On light it's printed flat. On dark saddle the large die is debossed (shadow only, no ink).
+
+The README is the exception: it uses `brand/mark-dark.svg` (the same paths in #8AA2E6) on dark, because an `<img>` can't cast the debossed shadow.
 
 The icon is the same die with just an S. It's built per size so it holds up at 16 px:
 

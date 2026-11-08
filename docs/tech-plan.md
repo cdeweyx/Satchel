@@ -11,7 +11,7 @@ The Notion web clipper saves to whichever account the Chrome profile holds, and 
 - Cloudflare free plan: under 3 ms CPU a save against a 10 ms cap (L4 probe). Claude about $0.00012 a save (L2 probe).
 - Single user, two Chrome profiles, one iPhone. Forkable: no secret in git, property names in one module.
 - Agent-built; every milestone has a check the agent runs alone.
-- Design fixed: popup shows page title then Later / Read / ★ (keys L / R / F), flashes "Saved ✓", closes. Shortcut: menu, then notification. Brand precedes the extension.
+- Design fixed: popup shows page title then Send to inbox / Mark as archived / Favorite (keys L / R / F), flashes "Saved ✓", closes. Shortcut: menu, then notification. Brand precedes the extension.
 - User calls: Notion down fails visibly, never retried. Re-save never re-runs Claude; latest status wins. All Chrome. Haiku 5.5. No new fields.
 
 ## 3. Scenarios
@@ -588,7 +588,7 @@ Filed to Linear, team Satchel, project V1 Satchel Buildout. Linear is live; this
 - **M0: Walking Skeleton.** SAT-1 Scaffold Worker repo, harness and guardrails · SAT-2 Canonicalize URLs with strip table and fixtures · SAT-3 Notion client with no retry · SAT-4 Router, auth, CORS and JSON error contract · SAT-5 Fallback title · SAT-6 Save handler: dedupe, create or patch, boundary · SAT-7 Gate: deploy, secrets, real curl, work-profile check
 - **M1: Title Lookup.** SAT-8 X title via oEmbed with Twitterbot fallback · SAT-9 Media titles via oEmbed · SAT-10 Page titles via HTMLRewriter with a crawler UA · SAT-11 Key-gated debug title route · SAT-12 Enrich stage 1: lookup orchestration and the one final patch
 - **M2: Claude Enrich and Health.** SAT-13 Schema cache and tag guard · SAT-14 Claude client with structured outputs · SAT-15 Enrich stage 2: Claude, tag guard, 22 s deadline · SAT-16 Keyed /health probes · SAT-17 Gate: real enriched save, key check
-- **M3: Chrome Extension.** SAT-18 Brand: mark, icons and tokens · SAT-19 Manifest and service worker owning the save · SAT-20 Popup: title, Later / Read / ★, keys L / R / F · SAT-21 Options page with Test · SAT-22 Gate: load unpacked in both profiles
+- **M3: Chrome Extension.** SAT-18 Brand: mark, icons and tokens · SAT-19 Manifest and service worker owning the save · SAT-20 Popup: title, Send to inbox / Mark as archived / Favorite, keys L / R / F · SAT-21 Options page with Test · SAT-22 Gate: load unpacked in both profiles
 - **M4: iOS Shortcut.** SAT-23 Shortcut generator · SAT-24 Template structural assertion · SAT-25 Sign step and install docs · SAT-26 Gate: AirDrop and first phone save
 - **M5: Device Test Pass.** SAT-27 Device and profile test pass
 - **M6: Open-Source Readiness.** SAT-28 Public README · SAT-29 License and CI · SAT-30 Gate: full-history scan and flip public
