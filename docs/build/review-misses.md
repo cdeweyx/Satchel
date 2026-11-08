@@ -1,4 +1,4 @@
-# Review misses (lands in docs/build/review-misses.md at close)
+# Review misses
 - 2026-11-08 PR4 conformance: P2 README rotation lacks filtered `secret bulk` command (carried to close docs PR). Verdict Ready.
 - 2026-11-08 PR4 correctness: P2 deploy.sh accepts blank secret values (carried as fail-closed rule into SAT-4 router: empty SATCHEL_KEY never matches). Verdict Ready.
 - 2026-11-08 PR4 tally: conformance raised 1 (0 P0/P1); correctness raised 1 (0 P0/P1). No validators needed. Rules fired: none.
