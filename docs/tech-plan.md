@@ -333,6 +333,7 @@ Every Worker milestone runs typecheck and tests plus the check below.
 - Door: two-way. Confirm by: M0 deploy plus `wrangler types --check`; the hook blocks a planted fake secret.
 - Status: proposed (round 0, 2026-11-07); revised round 2, 2026-11-07: hook and gitignore land in M0.
 - Status: decided (user review, 2026-11-07).
+- Status: revised in build, 2026-11-07 (SAT-1): `secrets.required` in wrangler.jsonc means the first deploy must carry secrets; every deploy runs `scripts/deploy.sh` (filtered `--secrets-file` plus `--var` for the two IDs); `secret bulk` is for rotation only.
 
 ### D-15 Keep property names in one config module
 

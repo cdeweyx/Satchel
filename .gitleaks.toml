@@ -1,0 +1,11 @@
+# Gitleaks config: the default rules plus any Anthropic key shape.
+# Allowlist nothing secret-shaped. Used by .githooks/pre-push.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "anthropic-key-any"
+description = "Anthropic API key (api03, usr, admin, or any other prefix)"
+regex = '''sk-ant-[a-z0-9]+-[A-Za-z0-9_\-]{20,}'''
+keywords = ["sk-ant-"]

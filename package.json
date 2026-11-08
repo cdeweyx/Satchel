@@ -1,0 +1,23 @@
+{
+  "name": "satchel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Save links to Notion in one tap, from Chrome or your iPhone.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "check": "wrangler types --strict-vars=false && tsc --noEmit && vitest run",
+    "types": "wrangler types --strict-vars=false",
+    "dev": "wrangler dev",
+    "deploy": "scripts/deploy.sh",
+    "prepare": "git config core.hooksPath .githooks"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.6.0",
+    "@msw/cloudflare": "^0.2.0",
+    "msw": "^3.0.4",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.158.0"
+  }
+}
