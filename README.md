@@ -33,8 +33,9 @@ Merged on `main`:
 - Fallback titles built from the URL (SAT-5).
 - Router with key auth, body validation, CORS preflight on `/save` and `/health`, and JSON errors for every code (SAT-4).
 - Save handler: dedupe query, then create or patch, with enrich handed to `waitUntil` (SAT-6).
+- Keyed `/health` probes Notion, Claude and X oEmbed (503 names the failing one) (SAT-16).
 
-`POST /save` dedupes and creates or patches rows (tested against mocked Notion); the first real-database check is SAT-7. A Notion error returns 502 `notion_<code>` with no retry. Enrich is still a no-op stub, so new rows keep their client or fallback title. `GET /health` answers keyless liveness.
+`POST /save` dedupes and creates or patches rows (tested against mocked Notion); the first real-database check is SAT-7. A Notion error returns 502 `notion_<code>` with no retry. Enrich is still a no-op stub, so new rows keep their client or fallback title. `GET /health` answers keyless liveness; with the key it probes Notion, Claude and X oEmbed (3 s each, in parallel) and returns 503 naming the failing one, and a wrong key gets 401.
 
 Left in M0: the first deploy and real-database check (SAT-7).
 
@@ -56,7 +57,7 @@ Roadmap:
 - `src/index.ts`: the Worker entry and router. Checks the `x-satchel-key` header in constant time, validates the save body, answers CORS preflights and 405s.
 - `src/save.ts`: `POST /save`: dedupe query, then create or patch.
 - `src/enrich.ts`: the background title lookup and Claude call (stub until M1 / M2).
-- `src/health.ts`: `GET /health` (keyless liveness today; keyed probes in M2).
+- `src/health.ts`: `GET /health`. Keyless is liveness; keyed runs three live probes (Notion data source, Anthropic models list, X oEmbed) and answers 503 when any isn't `ok`.
 - `src/contract.ts`: request and response types, error codes, and `json()`, which builds every response.
 - `src/canonical.ts`: URL canonicalization, dedupe keys and the Media flag. Pure, no network.
 - `src/fallback-title.ts`: the title used when the client sends none.
