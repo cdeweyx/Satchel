@@ -10,9 +10,7 @@
 // added here: sendMessage records each message and hands the test its reply to resolve.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createChromeMock } from "./chrome-mock";
-// @ts-expect-error Vite raw import; no types in this project
 import popupHtml from "../extension/popup.html?raw";
-// @ts-expect-error Vite raw import; no types in this project
 import popupCss from "../extension/popup.css?raw";
 
 // ---------- a small DOM, parsed from popup.html ----------
