@@ -11,14 +11,34 @@ const testBindings = {
   SATCHEL_KEY: "test-satchel-key",
 };
 
+// Two projects: the Worker's tests run in workerd; the Chrome extension's tests
+// (test/extension-*.test.ts) run in plain node against test/chrome-mock.ts.
+const extensionTests = "test/extension-*.test.ts";
+
 export default defineConfig({
-  plugins: [
-    cloudflareTest({
-      wrangler: { configPath: "./wrangler.jsonc" },
-      miniflare: { bindings: testBindings },
-    }),
-  ],
   test: {
-    setupFiles: ["./test/setup.ts"],
+    projects: [
+      {
+        plugins: [
+          cloudflareTest({
+            wrangler: { configPath: "./wrangler.jsonc" },
+            miniflare: { bindings: testBindings },
+          }),
+        ],
+        test: {
+          name: "worker",
+          include: ["test/**/*.test.ts"],
+          exclude: ["**/node_modules/**", extensionTests],
+          setupFiles: ["./test/setup.ts"],
+        },
+      },
+      {
+        test: {
+          name: "extension",
+          environment: "node",
+          include: [extensionTests],
+        },
+      },
+    ],
   },
 });

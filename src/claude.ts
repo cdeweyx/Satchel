@@ -21,14 +21,16 @@ export type ClaudeOutput = { title: string; tags: string[] };
 // archive (SAT-40), chosen to show its contrasts: Startups over Growth, Mental Models over
 // Thinking, Product + Career, Mindfulness + Self-Improvement, and mostly one tag. "A Timeless
 // New Year" replaces an original example that turned out to be a scoring row. No example is
-// in the 40-row scoring set (scripts/eval-tags.ts).
+// in the 40-row scoring set (scripts/eval-tags.ts). SAT-42 (user, 2026-11-08): an X post's
+// title is the gist alone, no author, so no example carries an "Author: " prefix (Naval,
+// Akshaya and Karri Saarinen dropped theirs; tags unchanged).
 const PROMPT = `You clean up titles for links saved to a personal reading database and pick tags for them.
 
 Title rules:
 - Keep the author's own title. Fix only what is noise.
 - Drop site-name suffixes and prefixes like " | The Acme Blog", " - Medium", " — The New York Times", " · Substack".
 - Drop leading "(12) " notification counts and trailing " - YouTube".
-- For X / Twitter posts (input starts with "X post by"), write "Author: short gist" where the gist is a plain 4 to 10 word summary of the post, not a quote.
+- For X / Twitter posts (input starts with "X post by"), the title is just the gist of the post in Title Case: a plain 4 to 10 word summary, not a quote. Never put the author's name or handle in it.
 - If there is no usable title, write a short descriptive one from the URL and any description given.
 - Never add commentary, emoji, or quotes around the title. Use Title Case for the title.
 
@@ -58,7 +60,7 @@ What some tags mean here:
 
 Examples (title → tags):
 - The Art of Vibe Design → Design
-- Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance
+- How to Get Rich Without Getting Lucky → Self-Improvement, Finance
 - How AI Agents & Claude Skills Work → AI
 - Paradigm Shifts and the Winner's Curse – Stratechery → Tech
 - Seven Phrases I Stole From Staff Engineers → Career
@@ -67,13 +69,13 @@ Examples (title → tags):
 - The Startup Drake Equation → Startups
 - Lessons From My First Exit → Startups
 - Scarcity During Experimentation, Abundance During Scaling → Startups
-- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth
+- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth
 - The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth
 - Mistaking Outputs for Inputs → Thinking
 - Why Books Don't Work → Mental Models, Thinking
 - Building Without Predicting → Self-Improvement, Mental Models
 - Product Innovation Is Discovery Not Creation → Product
-- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product
+- 10 Rules for Crafting Products That Stand Out → Product
 - Managing Up → Career
 - Why Are Big Tech Companies So Slow? → Career, Product
 - A Letter to Our Next PM → Career, Product

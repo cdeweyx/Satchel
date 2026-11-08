@@ -1,0 +1,6 @@
+# Shortcut icon, The Maker's Stamp (brand/DESIGN.md).
+# bag.fill: Shortcuts' bag glyph ("handbag", 59750 in Cherri's glyph table).
+glyph = 59750
+# Stamp blue #2F4DA0. Shortcuts takes no custom hex, so its closest color:
+# darkblue (#3871DE) beats blue (#1B9AF7).
+color = darkblue

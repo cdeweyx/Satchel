@@ -288,7 +288,7 @@ describe("enrich: X job through waitUntil (criterion 1)", () => {
     ]);
     expect(seen[2]!.body).toEqual({
       properties: {
-        [PROPS.name]: { title: [{ text: { content: "Naval: How to Get Rich (without getting lucky):" } }] },
+        [PROPS.name]: { title: [{ text: { content: "How to Get Rich (without getting lucky):" } }] },
         [PROPS.url]: { url: X_CANONICAL },
       },
     });
@@ -308,7 +308,7 @@ describe("enrich: X job through waitUntil (criterion 1)", () => {
 
     const patch = seen.find((s) => s.method === "PATCH")!;
     expect(patch.body).toMatchObject({
-      properties: { [PROPS.name]: { title: [{ text: { content: "Naval: Line one Line two Line three" } }] } },
+      properties: { [PROPS.name]: { title: [{ text: { content: "Line one Line two Line three" } }] } },
     });
   });
 
@@ -335,7 +335,7 @@ describe("enrich: X job through waitUntil (criterion 1)", () => {
 
     const patch = seen.find((s) => s.method === "PATCH")!;
     expect(patch.body).toEqual({
-      properties: { [PROPS.name]: { title: [{ text: { content: "Naval: Same url" } }] } },
+      properties: { [PROPS.name]: { title: [{ text: { content: "Same url" } }] } },
     });
   });
 });
@@ -400,7 +400,7 @@ describe("enrich: URL guard and URL failures (PR 17 rulings)", () => {
 
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
       properties: {
-        [PROPS.name]: { title: [{ text: { content: "Naval: How to Get Rich (without getting lucky):" } }] },
+        [PROPS.name]: { title: [{ text: { content: "How to Get Rich (without getting lucky):" } }] },
       },
     });
     expect(logs()[0]).toMatchObject({ event: "enrich", ok: true, patched: true });
@@ -430,7 +430,7 @@ describe("enrich: URL guard and URL failures (PR 17 rulings)", () => {
 
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
       properties: {
-        [PROPS.name]: { title: [{ text: { content: "Naval: How to Get Rich (without getting lucky):" } }] },
+        [PROPS.name]: { title: [{ text: { content: "How to Get Rich (without getting lucky):" } }] },
       },
     });
     expect(logs()).toEqual([expect.objectContaining({ event: "enrich", ok: true, patched: true })]);
@@ -478,7 +478,7 @@ describe("enrich: review fixes (PR 17 round 2)", () => {
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
       properties: {
         [PROPS.name]: {
-          title: [{ text: { content: "Naval: The three big decisions in life: pic.twitter.com/abc" } }],
+          title: [{ text: { content: "The three big decisions in life: pic.twitter.com/abc" } }],
         },
         [PROPS.url]: { url: X_CANONICAL },
       },
@@ -526,7 +526,7 @@ describe("enrich: review fixes (PR 17 round 2)", () => {
     await runInWaitUntil(xJob());
 
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
-      properties: { [PROPS.name]: { title: [{ text: { content: "Naval: Hello" } }] } },
+      properties: { [PROPS.name]: { title: [{ text: { content: "Hello" } }] } },
     });
   });
 
@@ -539,7 +539,7 @@ describe("enrich: review fixes (PR 17 round 2)", () => {
     await runInWaitUntil(xJob());
 
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
-      properties: { [PROPS.name]: { title: [{ text: { content: "Naval: Hello" } }] } },
+      properties: { [PROPS.name]: { title: [{ text: { content: "Hello" } }] } },
     });
   });
 
@@ -1270,7 +1270,7 @@ describe("SAT-37 criterion 1: a link-only X post has no post text", () => {
 
     const text = paragraph.replace(/<[^>]*>/g, "");
     expect(seen.find((s) => s.method === "PATCH")!.body).toMatchObject({
-      properties: nameProp(`Naval: ${text}`),
+      properties: nameProp(text),
     });
   });
 
@@ -1413,7 +1413,7 @@ describe("SAT-41: a client-title save gives Claude the page summary", () => {
     const clientTitle = 'Naval on X: "How to Get Rich" / X';
     mockOembed(record, xOembed("How to Get Rich<br>(without getting lucky):"));
     mockSchema(record, OPTIONS);
-    mockClaude(record, () => claudeAnswer({ title: "Naval: How to Build Wealth Without Luck", tags: ["AI"] }));
+    mockClaude(record, () => claudeAnswer({ title: "How to Build Wealth Without Luck", tags: ["AI"] }));
     mockNotion(record, { name: clientTitle, tags: [] });
 
     await runInWaitUntil(xJob({ clientTitle }));
@@ -1428,7 +1428,7 @@ describe("SAT-41: a client-title save gives Claude the page summary", () => {
     ]);
     expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
       properties: {
-        ...nameProp("Naval: How to Build Wealth Without Luck"),
+        ...nameProp("How to Build Wealth Without Luck"),
         [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] },
       },
     });
@@ -1491,6 +1491,124 @@ describe("SAT-41: a client-title save gives Claude the page summary", () => {
     });
     expect(logs()).toEqual([
       expect.objectContaining({ event: "enrich", ok: true, source: "client", patched: true, claude: true }),
+    ]);
+  });
+});
+
+describe("SAT-42: an X post's Name is the post text, no author, when Claude fails", () => {
+  const notFound = (record: Record_, url: string) =>
+    network.use(
+      http.get(url, async ({ request }) => {
+        await record(request);
+        return new HttpResponse("<html></html>", { status: 404, headers: { "content-type": "text/html" } });
+      }),
+    );
+
+  it("Claude 401 on an oEmbed X save: the patch carries the post text without 'Naval: ', plus the URL swap", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("How to Get Rich<br>  (without getting lucky):"));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, claude401);
+    mockNotion(record, { name: `X post ${X_ID}`, tags: [] });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${OEMBED}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    // Claude still sees who wrote it; only the Name drops the author.
+    expect((seen[2]!.body as ClaudeBody).messages[0]!.content).toBe(
+      `X post by Naval (@naval): "How to Get Rich (without getting lucky):"\nURL: ${X_STORED}`,
+    );
+    expect(seen[4]!.body).toEqual({
+      properties: { ...nameProp("How to Get Rich (without getting lucky):"), [PROPS.url]: { url: X_CANONICAL } },
+    });
+    const lines = logs();
+    expect(lines).toContainEqual({ event: "claude_failed", class: "AuthenticationError", status: 401, requestId: "req_401" });
+    expect(lines.filter((l) => l.event === "enrich")).toEqual([
+      expect.objectContaining({ ok: true, source: "x-oembed", patched: true, claude: false, tags: 0 }),
+    ]);
+  });
+
+  it("Claude 401 on a Twitterbot X save: the patch carries og:description without the display name", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    notFound(record, OEMBED);
+    htmlPage(
+      X_STORED,
+      record,
+      '<html><head><meta property="og:title" content="Naval (@naval) on X"/>' +
+        '<meta property="og:description" content="Seek wealth, not money or status."/></head><body></body></html>',
+    );
+    mockSchema(record, OPTIONS);
+    mockClaude(record, claude401);
+    mockNotion(record, { name: `X post ${X_ID}`, tags: [] });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: nameProp("Seek wealth, not money or status."),
+    });
+  });
+
+  it("a 3000-char post: the Name is the text alone, whitespace collapsed, cut at 2000", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("word<br>  ".repeat(600)));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, claude401);
+    mockNotion(record, { name: `X post ${X_ID}`, tags: [] });
+
+    await runInWaitUntil(xJob());
+
+    const body = seen.find((s) => s.method === "PATCH")!.body as {
+      properties: Record<string, { title: { text: { content: string } }[] }>;
+    };
+    const content = body.properties[PROPS.name]!.title[0]!.text.content;
+    expect(content).toBe("word ".repeat(400)); // 2000 chars, from "word word …"
+    expect(content).toHaveLength(2000);
+  });
+
+  it("a post whose own text starts with the author's name keeps it: only the lookup's prefix comes off", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, xOembed("Naval: a podcast about wealth and happiness"));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, claude401);
+    mockNotion(record, { name: `X post ${X_ID}`, tags: [] });
+
+    await runInWaitUntil(xJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toMatchObject({
+      properties: nameProp("Naval: a podcast about wealth and happiness"),
+    });
+  });
+
+  it("both X lookups and Claude fail: no Name is patched, so the '@naval on X' placeholder stays", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    notFound(record, OEMBED);
+    notFound(record, X_STORED);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, claude401);
+    mockNotion(record, { name: "@naval on X", tags: [] });
+
+    await runInWaitUntil(xJob({ fallbackTitle: "@naval on X" }));
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${OEMBED}`,
+      `GET ${X_STORED}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+    ]);
+    expect(logs().filter((l) => l.event === "enrich")).toEqual([
+      expect.objectContaining({ ok: true, source: "fallback", patched: false, claude: false }),
     ]);
   });
 });

@@ -216,11 +216,40 @@ describe("request shape", () => {
     ]);
   });
 
-  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40)", () => {
+  it("SAT-42: an X request's system prompt says the title is the gist in Title Case, no author name or handle", async () => {
+    const x = fixtures.cases.find((c) => c.input.shape === "x" && "handle" in c.input)!;
+    const { seen, record } = recorder();
+    network.use(
+      http.post(MESSAGES, async ({ request }) => {
+        await record(request);
+        return message(x.content);
+      }),
+    );
+
+    await cleanTitleAndTags(env, x.input, TAGS, signal());
+
+    const system = seen[0]!.body.system as string;
+    const titleRules = section(system, "Title rules:", "Tag rules:");
+    expect(titleRules.filter((l) => l.includes("X / Twitter"))).toEqual([
+      '- For X / Twitter posts (input starts with "X post by"), the title is just the gist of the post in Title Case: a plain 4 to 10 word summary, not a quote. Never put the author\'s name or handle in it.',
+    ]);
+    expect(system).not.toContain("Author: short gist");
+    expect(system).not.toMatch(/Author:/);
+    // No example teaches an "Author: …" title; the three that had one keep their tags.
+    const examples = section(system, "Examples (title → tags):", "Allowed tags: ");
+    expect(examples).toContain("- How to Get Rich Without Getting Lucky → Self-Improvement, Finance");
+    expect(examples).toContain("- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth");
+    expect(examples).toContain("- 10 Rules for Crafting Products That Stand Out → Product");
+    for (const author of ["Naval", "Akshaya", "Karri Saarinen"]) {
+      expect(examples.some((l) => l.startsWith(`- ${author}`))).toBe(false);
+    }
+  });
+
+  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40; SAT-42 drops three author prefixes)", () => {
     expect(section(systemPrompt(TAGS), "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
-      "- Naval: How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
+      "- How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
       "- How AI Agents & Claude Skills Work → AI",
       "- Paradigm Shifts and the Winner's Curse – Stratechery → Tech",
       "- Seven Phrases I Stole From Staff Engineers → Career",
@@ -229,13 +258,13 @@ describe("request shape", () => {
       "- The Startup Drake Equation → Startups",
       "- Lessons From My First Exit → Startups",
       "- Scarcity During Experimentation, Abundance During Scaling → Startups",
-      "- Akshaya: How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth",
+      "- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth",
       "- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth",
       "- Mistaking Outputs for Inputs → Thinking",
       "- Why Books Don't Work → Mental Models, Thinking",
       "- Building Without Predicting → Self-Improvement, Mental Models",
       "- Product Innovation Is Discovery Not Creation → Product",
-      "- Karri Saarinen: 10 Rules for Crafting Products That Stand Out → Product",
+      "- 10 Rules for Crafting Products That Stand Out → Product",
       "- Managing Up → Career",
       "- Why Are Big Tech Companies So Slow? → Career, Product",
       "- A Letter to Our Next PM → Career, Product",
