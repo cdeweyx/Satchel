@@ -33,9 +33,11 @@ Merged on `main`:
 - Fallback titles built from the URL (SAT-5).
 - Router with key auth, body validation, CORS preflight on `/save` and `/health`, and JSON errors for every code (SAT-4).
 - Save handler: dedupe query, then create or patch, with enrich handed to `waitUntil` (SAT-6).
+- Title lookups: X via oEmbed with a Twitterbot fallback (SAT-8), page titles via HTMLRewriter with a crawler UA (SAT-10), media via oEmbed (SAT-9).
+- Lookups wired into the background enrich: one lookup stage (5 s cap), a re-read, then one patch that writes the looked-up title only if the Name is unchanged since create, and swaps an X URL to oEmbed's canonical only if the URL is unchanged too (SAT-12).
 - Keyed `/health` probes Notion, Claude and X oEmbed (503 names the failing one) (SAT-16).
 
-`POST /save` dedupes and creates or patches rows (tested against mocked Notion); the first real-database check is SAT-7. A Notion error returns 502 `notion_<code>` with no retry. Enrich is still a no-op stub, so new rows keep their client or fallback title. `GET /health` answers keyless liveness; with the key it probes Notion, Claude and X oEmbed (3 s each, in parallel) and returns 503 naming the failing one, and a wrong key gets 401.
+`POST /save` dedupes and creates or patches rows (tested against mocked Notion); the first real-database check is SAT-7. A Notion error returns 502 `notion_<code>` with no retry. After a create, enrich looks up the real title in the background and patches it in (no Claude or tags yet, so a client title stays as sent). Once deployed, looked-up titles land about 2 s after a save. `GET /health` answers keyless liveness; with the key it probes Notion, Claude and X oEmbed (3 s each, in parallel) and returns 503 naming the failing one, and a wrong key gets 401.
 
 Left in M0: the first deploy and real-database check (SAT-7).
 
@@ -56,7 +58,8 @@ Roadmap:
 
 - `src/index.ts`: the Worker entry and router. Checks the `x-satchel-key` header in constant time, validates the save body, answers CORS preflights and 405s.
 - `src/save.ts`: `POST /save`: dedupe query, then create or patch.
-- `src/enrich.ts`: the background title lookup and Claude call (stub until M1 / M2).
+- `src/enrich.ts`: the background enrich: lookup stage, Claude slot (empty until M2), re-read, one guarded patch. Never throws; Notion failures log `enrich_failed`.
+- `src/title/`: title lookups. `x.ts` (oEmbed, then Twitterbot), `media.ts` (oEmbed), `page.ts` (HTMLRewriter, crawler UA), and `index.ts`, which dispatches by link kind (media falls through to the page read when oEmbed has no title).
 - `src/health.ts`: `GET /health`. Keyless is liveness; keyed runs three live probes (Notion data source, Anthropic models list, X oEmbed) and answers 503 when any isn't `ok`.
 - `src/contract.ts`: request and response types, error codes, and `json()`, which builds every response.
 - `src/canonical.ts`: URL canonicalization, dedupe keys and the Media flag. Pure, no network.
