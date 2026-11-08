@@ -57,7 +57,7 @@ Date: 2026-11-07. All probes READ-ONLY against the real "Articles" data source. 
 - URL property max 2000 chars, title `content` max 2000 chars. Truncate title; reject or trim URLs over 2000 (a doubled JWT URL in the DB is already ~1200).
 - `page_size` default is small; always set it. Query results cap at 10,000 with `request_status.type: "incomplete"`, irrelevant for a page_size 5 lookup.
 - `archived` is renamed `in_trash` on `2026-03-11`. We don't trash rows; don't read `archived` from responses either.
-- The data source's `parent` in responses is `{type:"database_id", database_id:"b456e0c8-48bb-4c89-9ee4-aa606fc05261"}` (hyphenated). IDs come back hyphenated; the un-hyphenated form in config is accepted on requests.
+- The data source's `parent` in responses is `{type:"database_id", database_id:"<database id>"}` (hyphenated). IDs come back hyphenated; the un-hyphenated form in config is accepted on requests.
 
 ## Month-three failure question
 
