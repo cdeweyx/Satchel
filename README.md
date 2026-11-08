@@ -37,6 +37,7 @@ Merged on `main`:
 - Lookups wired into the background enrich: one lookup stage (5 s cap), a re-read, then one patch that writes the looked-up title only if the Name is unchanged since create, and swaps an X URL to oEmbed's canonical only if the URL is unchanged too (SAT-12).
 - Keyed `/health` probes Notion, Claude and X oEmbed (503 names the failing one) (SAT-16).
 - Key-gated `GET /debug/title?url=` runs the real title lookup on the canonical URL (5 s cap) and returns `{ok, kind, stored, title, source, bytesRead, ms}`, to check Cloudflare egress from curl (SAT-11).
+- iOS Shortcut generator: unsigned template; signing and install docs in M4 (SAT-23).
 
 `POST /save` dedupes and creates or patches rows (tested against mocked Notion); the first real-database check is SAT-7. A Notion error returns 502 `notion_<code>` with no retry. After a create, enrich looks up the real title in the background and patches it in (no Claude or tags yet, so a client title stays as sent). Once deployed, looked-up titles land about 2 s after a save. `GET /health` answers keyless liveness; with the key it probes Notion, Claude and X oEmbed (3 s each, in parallel) and returns 503 naming the failing one, and a wrong key gets 401.
 
@@ -70,6 +71,7 @@ Roadmap:
 - `src/config.ts`: Notion property names (`PROPS`), the pinned Notion API version, and the database IDs.
 - `src/log.ts`: one structured log line per event, for Workers Logs.
 - `src/claude.ts`: the Claude Haiku call that cleans the title and picks tags with structured outputs. One attempt, 10 s; any failure logs `claude_failed` and returns null.
+- `shortcut/`: the iOS Shortcut. `build-shortcut.py` writes the unsigned template `Satchel.unsigned.shortcut` (placeholders only, never a key); `README.md` lists its actions and the manual build steps.
 - `scripts/deploy.sh`: deploys with secrets passed through a private temp file. Prints key names only.
 - `scripts/merge.sh`: squash-merges a PR only after an agent review says `Verdict: Ready @ <head sha>`.
 - `scripts/stop-check.sh`: the Claude Code Stop hook that runs `npm run check`.
