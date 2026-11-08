@@ -4,7 +4,7 @@ import { type EnrichJob, type SaveRequest, json } from "./contract";
 import { enrich } from "./enrich";
 import { fallbackTitle, isMissingTitle } from "./fallback-title";
 import { logEvent } from "./log";
-import { NotionError, type Properties, checkboxProp, notion, titleProp, urlProp } from "./notion";
+import { NotionError, type NotionPage, type Properties, checkboxProp, notion, titleProp, urlProp } from "./notion";
 
 // POST /save (D-1, D-2, D-10). The response path is one dedupe query plus one create or
 // patch, nothing else. Enrich runs in waitUntil, and only after a create.
@@ -24,9 +24,10 @@ const url = (cond: UrlFilter["url"]): UrlFilter => ({ property: PROPS.url, url: 
 
 // "Rules in full" → Canonicalization (D-5): for both host forms, equals, equals + "/",
 // starts_with + "?", starts_with + "#"; then equals raw. Always 9 clauses in one flat `or`,
-// even when raw repeats a stored form (a duplicate clause is harmless). A root URL's stored
-// form ends in "/", so its slash clause is the form without it (matches an old bare-host row).
-// X: one `contains "/status/<id>"`.
+// even when raw repeats a stored form (a duplicate clause is harmless). Revised in build (D-2):
+// a root URL's stored form ends in "/", so its slash clause is the form without it (matches an
+// old bare-host row); a stored form that already has a query uses starts_with + "&" (matches
+// an old row with extra params). X: one `contains "/status/<id>"`, post-filtered by xMatches.
 export function dedupeFilter(key: DedupeKey): DedupeFilter {
   if (key.type === "x") return url({ contains: `/status/${key.id}` });
   const clauses: UrlFilter[] = [];
@@ -34,12 +35,19 @@ export function dedupeFilter(key: DedupeKey): DedupeFilter {
     clauses.push(
       url({ equals: form }),
       url({ equals: ROOT.test(form) ? form.slice(0, -1) : `${form}/` }),
-      url({ starts_with: `${form}?` }),
+      url({ starts_with: form.includes("?") ? `${form}&` : `${form}?` }),
       url({ starts_with: `${form}#` }),
     );
   }
   clauses.push(url({ equals: key.raw }));
   return { or: clauses };
+}
+
+// `contains "/status/20"` also matches `/status/2001`. A real hit has the id followed by the
+// end of the URL or a non-digit (`?`, `/`, `#`).
+function xMatches(page: NotionPage, id: string): boolean {
+  const value = (page.properties[PROPS.url] as { url?: unknown } | undefined)?.url;
+  return typeof value === "string" && new RegExp(`/status/${id}(?!\\d)`).test(value);
 }
 
 // Contract (D-4) status map: later → false/false, read → true/false, favorite → true/true.
@@ -67,7 +75,10 @@ async function save(req: Request, env: Env, ctx: ExecutionContext): Promise<Resp
     const urlProps = urlProp(c.stored);
 
     stage = "query";
-    const hit = (await client.query(dedupeFilter(c.dedupe), SYNC))[0]; // oldest match wins
+    const results = await client.query(dedupeFilter(c.dedupe), SYNC);
+    const key = c.dedupe;
+    const matches = key.type === "x" ? results.filter((p) => xMatches(p, key.id)) : results;
+    const hit = matches[0]; // oldest surviving match wins; none is a miss
 
     if (hit) {
       stage = "patch";

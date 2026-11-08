@@ -17,7 +17,7 @@ import { network } from "./network";
 vi.mock("../src/enrich", { spy: true });
 
 const fixtures = JSON.parse(fixturesText) as Record<
-  "plain" | "nytimes" | "root" | "x",
+  "plain" | "nytimes" | "root" | "query" | "x",
   Record<string, DedupeFilter>
 >;
 
@@ -34,7 +34,12 @@ type WorkerRequest = Request<unknown, IncomingRequestCfProperties>;
 type Seen = { method: string; path: string; body: any; version: string | null };
 type Failure = { status: number; body?: unknown; headers?: Record<string, string> } | "network";
 
-const page = (id: string) => ({ object: "page", id, properties: {} });
+// A result can carry its URL property, as Notion returns it, for the X post-filter.
+type Result = string | { id: string; url: string };
+const page = (r: Result) =>
+  typeof r === "string"
+    ? { object: "page", id: r, properties: {} }
+    : { object: "page", id: r.id, properties: { [PROPS.url]: { id: "u", type: "url", url: r.url } } };
 const notionError = (status: number, code: string) => ({
   object: "error",
   status,
@@ -47,7 +52,7 @@ const notionError = (status: number, code: string) => ({
 // ordering) with its parsed body, as Notion would receive it.
 function mockNotion(
   opts: {
-    results?: string[];
+    results?: Result[];
     fail?: Partial<Record<"query" | "create" | "patch", Failure>>;
     beforeQuery?: () => Promise<void>;
   } = {},
@@ -162,7 +167,7 @@ afterEach(() => {
 });
 
 describe("criterion 1: dedupe filter from DedupeKey", () => {
-  it.each(Object.entries({ ...fixtures.plain, ...fixtures.root }))(
+  it.each(Object.entries({ ...fixtures.plain, ...fixtures.root, ...fixtures.query }))(
     "URL %s → 9 clauses in one flat or",
     (input, expected) => {
       const filter = dedupeFilter(canonicalize(input).dedupe);
@@ -207,6 +212,21 @@ describe("criterion 1: dedupe filter from DedupeKey", () => {
     const queries = seen.filter((s) => s.path === QUERY_PATH);
     expect(queries.map((q) => q.body)).toEqual([queryBody(plainFilter), queryBody(xFilter)]);
     expect(queries.every((q) => q.version === NOTION_VERSION)).toBe(true);
+  });
+
+  it("a stored URL with a query uses starts_with + '&' for both host forms, not + '?'", async () => {
+    const [[input, expected]] = Object.entries(fixtures.query) as [[string, DedupeFilter]];
+    const { seen } = mockNotion();
+    await call({ url: input, status: "later" });
+    const filter = seen[0]!.body.filter;
+    expect(filter).toEqual(expected);
+    const startsWith = filter.or.flatMap((c: { url: Record<string, string> }) => c.url.starts_with ?? []);
+    expect(startsWith).toEqual([
+      "https://youtube.com/watch?v=dQw4w9WgXcQ&",
+      "https://youtube.com/watch?v=dQw4w9WgXcQ#",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ&",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ#",
+    ]);
   });
 
   it("a padded URL is trimmed: the raw clause is the trimmed input", async () => {
@@ -271,11 +291,42 @@ describe("criterion 2: hit patches status only, miss creates the row", () => {
   });
 
   it("logs one save line per outcome: action, kind, ms", async () => {
-    mockNotion({ results: [OLDEST] });
+    mockNotion({ results: [{ id: OLDEST, url: "https://x.com/i/status/20" }] });
     await call({ url: "https://x.com/jack/status/20", status: "later" });
     expect(logs.filter((l) => l.event === "save")).toEqual([
       { event: "save", action: "update", kind: "x", ms: expect.any(Number) },
     ]);
+  });
+});
+
+describe("X hits are post-filtered to the exact post id (D-2, revised in build)", () => {
+  const save20 = { url: "https://twitter.com/jack/status/20?s=46", status: "read" };
+
+  it("a result at /status/2001 for id 20 is ignored: the row is created", async () => {
+    const { seen } = mockNotion({ results: [{ id: OLDEST, url: "https://x.com/i/status/2001" }] });
+    await expectJson(await call(save20), 200, { ok: true, id: CREATED });
+    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${QUERY_PATH}`, "POST /pages"]);
+    expect(seen[1]!.body.properties[PROPS.url]).toEqual({ url: "https://x.com/i/status/20" });
+    expect(vi.mocked(enrich).mock.calls.map((c) => c[0].pageId)).toEqual([CREATED]);
+  });
+
+  it("an old clipper row https://x.com/naval/status/20?s=20 is a hit", async () => {
+    const { seen } = mockNotion({ results: [{ id: OLDEST, url: "https://x.com/naval/status/20?s=20" }] });
+    await expectJson(await call(save20), 200, { ok: true, id: OLDEST });
+    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${QUERY_PATH}`, `PATCH /pages/${OLDEST}`]);
+    expect(seen[1]!.body).toEqual({ properties: statusProps(true, false) });
+    expect(vi.mocked(enrich).mock.calls).toEqual([]);
+  });
+
+  it("the oldest surviving match wins: a longer-id row ahead of it is skipped", async () => {
+    const { seen } = mockNotion({
+      results: [
+        { id: OLDEST, url: "https://x.com/i/status/2001" },
+        { id: NEWER, url: "https://twitter.com/jack/status/20/photo/1" },
+      ],
+    });
+    await expectJson(await call(save20), 200, { ok: true, id: NEWER });
+    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${QUERY_PATH}`, `PATCH /pages/${NEWER}`]);
   });
 });
 

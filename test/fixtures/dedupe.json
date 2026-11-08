@@ -1,5 +1,5 @@
 {
-  "_about": "Expected dedupe filters, keyed by the client's URL. Written by hand from docs/tech-plan.md (section 6 and Rules in full > Canonicalization (D-5)): for the bare and www. host forms, equals, equals + '/', starts_with + '?', starts_with + '#', then equals raw (9 clauses, one flat or). X is one contains '/status/<id>'. Lead rulings C4 (always 9) and C5 (a root form's slash clause drops the slash). Never captured from the code.",
+  "_about": "Expected dedupe filters, keyed by the client's URL. Written by hand from docs/tech-plan.md (section 6 and Rules in full > Canonicalization (D-5)): for the bare and www. host forms, equals, equals + '/', starts_with + '?', starts_with + '#', then equals raw (9 clauses, one flat or). X is one contains '/status/<id>'. Lead rulings C4 (always 9), C5 (a root form's slash clause drops the slash) and the D-2 build revision (a form that already has a query uses starts_with + '&' instead of '?'). Never captured from the code.",
   "plain": {
     "https://www.example.com/blog/post/?utm_source=news#top": {
       "or": [
@@ -68,6 +68,21 @@
         { "property": "URL", "url": { "starts_with": "https://www.example.com/?" } },
         { "property": "URL", "url": { "starts_with": "https://www.example.com/#" } },
         { "property": "URL", "url": { "equals": "https://example.com" } }
+      ]
+    }
+  },
+  "query": {
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ&si=abc123": {
+      "or": [
+        { "property": "URL", "url": { "equals": "https://youtube.com/watch?v=dQw4w9WgXcQ" } },
+        { "property": "URL", "url": { "equals": "https://youtube.com/watch?v=dQw4w9WgXcQ/" } },
+        { "property": "URL", "url": { "starts_with": "https://youtube.com/watch?v=dQw4w9WgXcQ&" } },
+        { "property": "URL", "url": { "starts_with": "https://youtube.com/watch?v=dQw4w9WgXcQ#" } },
+        { "property": "URL", "url": { "equals": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" } },
+        { "property": "URL", "url": { "equals": "https://www.youtube.com/watch?v=dQw4w9WgXcQ/" } },
+        { "property": "URL", "url": { "starts_with": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&" } },
+        { "property": "URL", "url": { "starts_with": "https://www.youtube.com/watch?v=dQw4w9WgXcQ#" } },
+        { "property": "URL", "url": { "equals": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&si=abc123" } }
       ]
     }
   },
