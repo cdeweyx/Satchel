@@ -64,6 +64,7 @@ Roadmap:
 - `src/tags.ts`: the tag guard. Caches the live Tags options for 10 minutes and maps tag names to option ids (case-insensitive, unknowns dropped, max 3).
 - `src/config.ts`: Notion property names (`PROPS`), the pinned Notion API version, and the database IDs.
 - `src/log.ts`: one structured log line per event, for Workers Logs.
+- `src/claude.ts`: the Claude Haiku call that cleans the title and picks tags with structured outputs. One attempt, 10 s; any failure logs `claude_failed` and returns null.
 - `scripts/deploy.sh`: deploys with secrets passed through a private temp file. Prints key names only.
 - `scripts/merge.sh`: squash-merges a PR only after an agent review says `Verdict: Ready @ <head sha>`.
 - `scripts/stop-check.sh`: the Claude Code Stop hook that runs `npm run check`.
