@@ -1,10 +1,12 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { http, HttpResponse } from "msw";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROPS } from "../src/config";
 import type { EnrichJob } from "../src/contract";
-import { enrich, nameUnchanged } from "../src/enrich";
+import { DEADLINE_MS, enrich, nameUnchanged, toClaudeInput } from "../src/enrich";
+import worker from "../src/index";
+import { invalidateTagCache } from "../src/tags";
 import { lookupTitle } from "../src/title";
 import { PAGE_UA } from "../src/title/page";
 import { network } from "./network";
@@ -12,6 +14,9 @@ import { network } from "./network";
 const API = "https://api.notion.com/v1";
 const PAGE_ID = "11111111-2222-3333-4444-555555555555";
 const PAGE_URL = `${API}/pages/${PAGE_ID}`;
+const DS = "test-data-source-id"; // vitest.config.ts binding
+const SCHEMA_URL = `${API}/data_sources/${DS}`;
+const MESSAGES = "https://api.anthropic.com/v1/messages";
 
 const X_ID = "1002103360646823936";
 const X_STORED = `https://x.com/i/status/${X_ID}`;
@@ -46,7 +51,8 @@ function recorder() {
 }
 
 // A re-read page whose Name is `name`, split across two rich-text runs to exercise the join.
-function notionPage(name: string, url: string | null = X_STORED) {
+// `tags` adds a Tags multi_select with those options (omitted: no Tags property at all).
+function notionPage(name: string, url: string | null = X_STORED, tags?: { id: string; name: string }[]) {
   const half = Math.ceil(name.length / 2);
   const run = (s: string) => ({
     type: "text",
@@ -61,21 +67,29 @@ function notionPage(name: string, url: string | null = X_STORED) {
     properties: {
       [PROPS.name]: { id: "title", type: "title", title: [run(name.slice(0, half)), run(name.slice(half))] },
       [PROPS.url]: { id: "u", type: "url", url },
+      ...(tags ? { [PROPS.tags]: { id: "t", type: "multi_select", multi_select: tags } } : {}),
     },
   };
 }
 
-// Mocks the re-read (GET) and the patch (PATCH) of PAGE_ID, recording both.
+type NotionFailure = { status: number; code: string };
+
+// Mocks the re-read (GET) and the patch (PATCH) of PAGE_ID, recording both. `patchFailures`
+// answers the Nth patch with its entry (null or past the end: 200).
 function mockNotion(
   record: Record_,
   opts: {
-    name: string;
+    name: string | (() => string);
     url?: string | null;
+    tags?: { id: string; name: string }[];
     rereadStatus?: number;
     patchStatus?: number;
+    patchFailures?: (NotionFailure | null)[];
     rereadDelayMs?: number;
+    patchDelayMs?: number;
   },
 ) {
+  let patches = 0;
   network.use(
     http.get(PAGE_URL, async ({ request }) => {
       await record(request);
@@ -86,10 +100,19 @@ function mockNotion(
           { status: opts.rereadStatus },
         );
       }
-      return HttpResponse.json(notionPage(opts.name, opts.url === undefined ? X_STORED : opts.url));
+      const name = typeof opts.name === "function" ? opts.name() : opts.name;
+      return HttpResponse.json(notionPage(name, opts.url === undefined ? X_STORED : opts.url, opts.tags));
     }),
     http.patch(PAGE_URL, async ({ request }) => {
       await record(request);
+      if (opts.patchDelayMs) await new Promise((r) => setTimeout(r, opts.patchDelayMs));
+      const failure = opts.patchFailures?.[patches++];
+      if (failure) {
+        return HttpResponse.json(
+          { object: "error", status: failure.status, code: failure.code, message: "mocked" },
+          { status: failure.status },
+        );
+      }
       if (opts.patchStatus) {
         return HttpResponse.json(
           { object: "error", status: opts.patchStatus, code: "service_unavailable", message: "down" },
@@ -133,11 +156,92 @@ function captureLogs() {
     spy.mock.calls.map((args) => JSON.parse(String(args[0])) as Record<string, unknown>);
 }
 
-async function runInWaitUntil(job: EnrichJob) {
+async function runInWaitUntil(job: EnrichJob, opts?: { deadlineMs?: number }) {
   const ctx = createExecutionContext();
-  ctx.waitUntil(enrich(job, env));
+  ctx.waitUntil(opts ? enrich(job, env, opts) : enrich(job, env));
   await waitOnExecutionContext(ctx);
 }
+
+// --- Tag options (data source schema) and Claude ---
+
+type TagOption = { id: string; name: string; color?: string };
+const OPTIONS: TagOption[] = [
+  { id: "opt-ai", name: "AI", color: "blue" },
+  { id: "opt-design", name: "Design", color: "red" },
+  { id: "opt-news", name: "News", color: "green" },
+  { id: "opt-product", name: "Product", color: "gray" },
+];
+
+function schemaBody(options: TagOption[]) {
+  return {
+    object: "data_source",
+    id: DS,
+    properties: {
+      [PROPS.name]: { id: "title", name: PROPS.name, type: "title", title: {} },
+      [PROPS.tags]: { id: "t", name: PROPS.tags, type: "multi_select", multi_select: { options } },
+    },
+  };
+}
+
+// Serves each schema retrieve in turn (the last one repeats): an options list or a failure.
+function mockSchema(record: Record_, ...answers: (TagOption[] | NotionFailure)[]) {
+  let calls = 0;
+  network.use(
+    http.get(SCHEMA_URL, async ({ request }) => {
+      await record(request);
+      const answer = answers[Math.min(calls++, answers.length - 1)]!;
+      if (!Array.isArray(answer)) {
+        return HttpResponse.json(
+          { object: "error", status: answer.status, code: answer.code, message: "mocked" },
+          { status: answer.status },
+        );
+      }
+      return HttpResponse.json(schemaBody(answer));
+    }),
+  );
+}
+
+// A Messages API answer, as research 02 recorded it.
+function claudeAnswer(output: { title: string; tags: string[] }) {
+  return HttpResponse.json(
+    {
+      id: "msg_01Test",
+      type: "message",
+      role: "assistant",
+      model: "claude-haiku-5-5",
+      content: [{ type: "text", text: JSON.stringify(output) }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 900, output_tokens: 40 },
+    },
+    { headers: { "request-id": "req_ok_1" } },
+  );
+}
+
+function claude401() {
+  return HttpResponse.json(
+    { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" }, request_id: "req_401" },
+    { status: 401, headers: { "request-id": "req_401" } },
+  );
+}
+
+type ClaudeBody = {
+  system: string;
+  messages: { role: string; content: string }[];
+  output_config: { format: { schema: { properties: { tags: { items: { enum: string[] } } } } } };
+};
+
+function mockClaude(record: Record_, answer: () => Response | Promise<Response>) {
+  network.use(
+    http.post(MESSAGES, async ({ request }) => {
+      await record(request);
+      return answer();
+    }),
+  );
+}
+
+const tagsOf = (body: unknown) =>
+  (body as { properties: Record<string, { multi_select?: unknown }> }).properties[PROPS.tags]?.multi_select;
 
 const xJob = (over: Partial<EnrichJob> = {}): EnrichJob => ({
   pageId: PAGE_ID,
@@ -154,6 +258,14 @@ const pageJob = (over: Partial<EnrichJob> = {}): EnrichJob => ({
   kind: "page",
   fallbackTitle: "Hello world · example.com",
   ...over,
+});
+
+// The tag cache is per isolate, so every test starts cold. The default schema has a Tags
+// property with no options, so Claude is skipped (R4) and the SAT-12 tests below keep
+// exercising lookup, guards and failures on their own. SAT-15 tests mock their own schema.
+beforeEach(() => {
+  invalidateTagCache();
+  network.use(http.get(SCHEMA_URL, () => HttpResponse.json(schemaBody([]))));
 });
 
 afterEach(() => {
@@ -598,6 +710,449 @@ describe("enrich: client title (criterion 5)", () => {
     expect(logs()).toEqual([
       expect.objectContaining({ event: "enrich", ok: true, pageId: PAGE_ID, source: "client", patched: false }),
     ]);
+  });
+});
+
+// --- SAT-15: Claude stage, tag guard, 22 s deadline ---
+
+const PAGE_HTML = "<html><head><title>Hello World, Properly</title></head><body></body></html>";
+const LOOKED_UP = { [PROPS.name]: { title: [{ text: { content: "Hello World, Properly" } }] } };
+const nameProp = (s: string) => ({ [PROPS.name]: { title: [{ text: { content: s } }] } });
+
+describe("SAT-15 criterion 1: tag guard in the patch", () => {
+  it("a fake tag is dropped, at most 3 survive, and Tags go out as ids only", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () =>
+      claudeAnswer({ title: "Hello World, Properly Cleaned", tags: ["AI", "Made Up Tag", "design", "News", "Product"] }),
+    );
+    mockNotion(record, { name: "Hello world · example.com", tags: [] });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${ARTICLE}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    // The enum is the live option names, in schema order.
+    const claudeBody = seen[2]!.body as ClaudeBody;
+    expect(claudeBody.output_config.format.schema.properties.tags.items.enum).toEqual([
+      "AI",
+      "Design",
+      "News",
+      "Product",
+    ]);
+    expect(claudeBody.messages[0]!.content).toBe("Title: Hello World, Properly\nURL: https://example.com/post/hello-world");
+    // "Made Up Tag" is gone, "design" matched case-insensitively, capped at 3, ids only.
+    expect(seen[4]!.body).toEqual({
+      properties: {
+        ...nameProp("Hello World, Properly Cleaned"),
+        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }, { id: "opt-design" }, { id: "opt-news" }] },
+      },
+    });
+    expect(JSON.stringify(seen[4]!.body)).not.toContain('"name"');
+    expect(logs()).toEqual([
+      expect.objectContaining({ event: "enrich", ok: true, pageId: PAGE_ID, source: "page", claude: true, tags: 3 }),
+    ]);
+  });
+
+  it("Claude's title gets R2 hygiene: whitespace collapsed; blank falls back to the looked-up title", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "  Spaced\n\n  Out   Title ", tags: ["AI"] }));
+    mockNotion(record, { name: "Hello world · example.com", tags: [] });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { ...nameProp("Spaced Out Title"), [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] } },
+    });
+  });
+
+  it("an empty options list skips Claude entirely and logs claude: false (R4)", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, []);
+    mockClaude(record, () => claudeAnswer({ title: "Never", tags: [] }));
+    mockNotion(record, { name: "Hello world · example.com", tags: [] });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.some((s) => s.url === MESSAGES)).toBe(false);
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({ properties: LOOKED_UP });
+    expect(logs()).toEqual([expect.objectContaining({ event: "enrich", ok: true, claude: false, tags: 0 })]);
+  });
+});
+
+describe("SAT-15 criterion 2: Claude 401 through /save", () => {
+  it("the save answers 200 first; the patch carries the looked-up title and no Tags", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    network.use(
+      http.post(`${API}/data_sources/${DS}/query`, async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ object: "list", results: [], has_more: false });
+      }),
+      http.post(`${API}/pages`, async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ object: "page", id: PAGE_ID, properties: {} });
+      }),
+    );
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      return claude401();
+    });
+    // The re-read shows whatever the create wrote, as Notion would.
+    const created = () => {
+      const body = seen.find((s) => s.method === "POST" && s.url === `${API}/pages`)!.body as {
+        properties: Record<string, { title: { text: { content: string } }[] }>;
+      };
+      return body.properties[PROPS.name]!.title[0]!.text.content;
+    };
+    mockNotion(record, { name: created, tags: [] });
+
+    const ctx = createExecutionContext();
+    let requestsBeforeResponse = -1;
+    const res = await worker
+      .fetch(
+        new Request("https://satchel.test/save", {
+          method: "POST",
+          headers: { "x-satchel-key": "test-satchel-key", "content-type": "application/json" },
+          body: JSON.stringify({ url: ARTICLE, status: "later" }),
+        }) as Request<unknown, IncomingRequestCfProperties>,
+        env,
+        ctx,
+      )
+      .then((r) => {
+        requestsBeforeResponse = seen.length;
+        return r;
+      });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, id: PAGE_ID });
+    await waitOnExecutionContext(ctx);
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `POST ${API}/data_sources/${DS}/query`,
+      `POST ${API}/pages`,
+      `GET ${ARTICLE}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    // The 200 was back while only the query and create had happened.
+    expect(requestsBeforeResponse).toBe(2);
+    expect(seen[6]!.body).toEqual({ properties: LOOKED_UP });
+    const lines = logs();
+    expect(lines).toContainEqual({ event: "claude_failed", class: "AuthenticationError", status: 401, requestId: "req_401" });
+    expect(lines.filter((l) => l.event === "enrich")).toEqual([
+      expect.objectContaining({ ok: true, pageId: PAGE_ID, source: "page", patched: true, claude: false, tags: 0 }),
+    ]);
+    expect(lines.some((l) => l.event === "enrich_failed")).toBe(false);
+  });
+});
+
+describe("SAT-15 criterion 3: a pre-tagged row", () => {
+  it("re-read shows tags: the patch has no Tags key, the Name still lands", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "Claude Title", tags: ["AI", "Design"] }));
+    mockNotion(record, { name: "Hello world · example.com", tags: [{ id: "opt-news", name: "News" }] });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({ properties: nameProp("Claude Title") });
+    expect(logs()).toEqual([expect.objectContaining({ event: "enrich", ok: true, claude: true, tags: 0 })]);
+  });
+
+  it("a re-read without a readable Tags property is treated as tagged (never overwrite what we can't read)", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "Claude Title", tags: ["AI"] }));
+    mockNotion(record, { name: "Hello world · example.com" }); // no Tags property
+
+    await runInWaitUntil(pageJob());
+
+    expect(tagsOf(seen.find((s) => s.method === "PATCH")!.body)).toBeUndefined();
+  });
+});
+
+describe("SAT-15 criterion 4: stale tag cache", () => {
+  it("patch 400 validation_error → one schema refetch, one more patch with the new ids", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    // "AI" was recreated under a new id and "Design" deleted since the cache filled.
+    mockSchema(record, OPTIONS, [
+      { id: "opt-ai-v2", name: "AI" },
+      { id: "opt-news", name: "News" },
+    ]);
+    mockClaude(record, () => claudeAnswer({ title: "Claude Title", tags: ["AI", "Design"] }));
+    mockNotion(record, {
+      name: "Hello world · example.com",
+      tags: [],
+      patchFailures: [{ status: 400, code: "validation_error" }],
+    });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url}`).slice(3)).toEqual([
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+      `GET ${SCHEMA_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    const patches = seen.filter((s) => s.method === "PATCH");
+    expect(patches[0]!.body).toEqual({
+      properties: { ...nameProp("Claude Title"), [PROPS.tags]: { multi_select: [{ id: "opt-ai" }, { id: "opt-design" }] } },
+    });
+    expect(patches[1]!.body).toEqual({
+      properties: { ...nameProp("Claude Title"), [PROPS.tags]: { multi_select: [{ id: "opt-ai-v2" }] } },
+    });
+    expect(logs()).toEqual([expect.objectContaining({ event: "enrich", ok: true, claude: true, tags: 1 })]);
+  });
+
+  it("a second validation_error is enrich_failed {stage: patch}; no third patch", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "Claude Title", tags: ["AI"] }));
+    const bad = { status: 400, code: "validation_error" };
+    mockNotion(record, { name: "Hello world · example.com", tags: [], patchFailures: [bad, bad, bad] });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.filter((s) => s.method === "PATCH")).toHaveLength(2);
+    expect(seen.filter((s) => s.url === SCHEMA_URL)).toHaveLength(2);
+    expect(logs()).toEqual([
+      { event: "enrich_failed", ok: false, stage: "patch", pageId: PAGE_ID, status: 400, error: "validation_error" },
+    ]);
+  });
+
+  it("a validation_error on a patch without Tags is enrich_failed {stage: patch}, no refetch (R5)", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "Claude Title", tags: ["AI"] }));
+    mockNotion(record, {
+      name: "Hello world · example.com",
+      tags: [{ id: "opt-ai", name: "AI" }],
+      patchFailures: [{ status: 400, code: "validation_error" }],
+    });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.filter((s) => s.method === "PATCH")).toHaveLength(1);
+    expect(seen.filter((s) => s.url === SCHEMA_URL)).toHaveLength(1);
+    expect(logs()).toEqual([
+      { event: "enrich_failed", ok: false, stage: "patch", pageId: PAGE_ID, status: 400, error: "validation_error" },
+    ]);
+  });
+
+  it("a failed refetch is enrich_failed {stage: schema}; no second patch", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS, { status: 503, code: "service_unavailable" });
+    mockClaude(record, () => claudeAnswer({ title: "Claude Title", tags: ["AI"] }));
+    mockNotion(record, {
+      name: "Hello world · example.com",
+      tags: [],
+      patchFailures: [{ status: 400, code: "validation_error" }],
+    });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.filter((s) => s.method === "PATCH")).toHaveLength(1);
+    expect(logs()).toEqual([
+      { event: "enrich_failed", ok: false, stage: "schema", pageId: PAGE_ID, status: 503, error: "service_unavailable" },
+    ]);
+  });
+});
+
+describe("SAT-15 criterion 5: the 22 s deadline", () => {
+  it("Claude hanging past the deadline: enrich_deadline, then re-read and patch on their own timeouts", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => new Promise<Response>(() => {}));
+    // Each takes 200 ms; under the already-fired deadline signal they'd abort at once.
+    mockNotion(record, { name: "Hello world · example.com", tags: [], rereadDelayMs: 200, patchDelayMs: 200 });
+
+    const start = performance.now();
+    await runInWaitUntil(pageJob(), { deadlineMs: 300 });
+    const elapsed = performance.now() - start;
+
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([
+      `GET ${ARTICLE}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    const reread = seen[3]!;
+    expect(reread.at).toBeGreaterThanOrEqual(290);
+    expect(reread.at).toBeLessThan(800);
+    // About deadline + re-read + patch (300 + 200 + 200), nowhere near Claude's 10 s.
+    expect(elapsed).toBeGreaterThanOrEqual(680);
+    expect(elapsed).toBeLessThan(2000);
+    expect(seen[4]!.body).toEqual({ properties: LOOKED_UP });
+    const lines = logs();
+    const deadline = lines.find((l) => l.event === "enrich_deadline");
+    expect(deadline).toMatchObject({ pageId: PAGE_ID });
+    expect(deadline!.ms as number).toBeGreaterThanOrEqual(290);
+    expect(lines.filter((l) => l.event === "enrich")).toEqual([
+      expect.objectContaining({ ok: true, patched: true, claude: false, tags: 0 }),
+    ]);
+    expect(lines.some((l) => l.event === "enrich_failed")).toBe(false);
+  });
+
+  it("the default deadline is 22 s from task start", async () => {
+    expect(DEADLINE_MS).toBe(22_000);
+    captureLogs();
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    // Everything fails fast against the catch-all; only the timer matters here.
+    await enrich(pageJob(), env);
+    expect(timers.mock.calls.some((c) => c[1] === 22_000)).toBe(true);
+    timers.mockClear();
+    await enrich(pageJob(), env, { deadlineMs: 300 });
+    expect(timers.mock.calls.some((c) => c[1] === 300)).toBe(true);
+    expect(timers.mock.calls.some((c) => c[1] === 22_000)).toBe(false);
+  });
+});
+
+describe("SAT-15 criterion 6: schema retrieve fails", () => {
+  it("503 → no Claude call, the patch carries the looked-up title and no Tags, enrich_failed {stage: schema}", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    htmlPage(ARTICLE, record, PAGE_HTML);
+    mockSchema(record, { status: 503, code: "service_unavailable" });
+    mockClaude(record, () => claudeAnswer({ title: "Never", tags: ["AI"] }));
+    mockNotion(record, { name: "Hello world · example.com", tags: [] });
+
+    await runInWaitUntil(pageJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([
+      `GET ${ARTICLE}`,
+      `GET ${SCHEMA_URL}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    expect(seen[3]!.body).toEqual({ properties: LOOKED_UP });
+    expect(logs()).toEqual([
+      { event: "enrich_failed", ok: false, stage: "schema", pageId: PAGE_ID, status: 503, error: "service_unavailable" },
+      expect.objectContaining({ event: "enrich", ok: true, patched: true, claude: false, tags: 0 }),
+    ]);
+  });
+});
+
+describe("SAT-15: a client title is cleaned by Claude too (R3)", () => {
+  it("Claude gets the client title and URL only; its title replaces an unedited client title", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "How to Get Rich", tags: ["AI"] }));
+    mockNotion(record, { name: "how to get rich | Medium", tags: [] });
+
+    await runInWaitUntil(pageJob({ clientTitle: "how to get rich | Medium" }));
+
+    const claudeBody = seen.find((s) => s.url === MESSAGES)!.body as ClaudeBody;
+    expect(claudeBody.messages).toEqual([
+      { role: "user", content: "Title: how to get rich | Medium\nURL: https://example.com/post/hello-world" },
+    ]);
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { ...nameProp("How to Get Rich"), [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] } },
+    });
+  });
+
+  it("a client title edited in Notion since create keeps the user's edit; Tags still land", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "How to Get Rich", tags: ["AI"] }));
+    mockNotion(record, { name: "My own words", tags: [] });
+
+    await runInWaitUntil(pageJob({ clientTitle: "how to get rich | Medium" }));
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { [PROPS.tags]: { multi_select: [{ id: "opt-ai" }] } },
+    });
+  });
+});
+
+describe("SAT-15 criterion 7: toClaudeInput shapes", () => {
+  it("x: an X lookup with author and text", () => {
+    const lookup = {
+      title: "Naval: How to Get Rich (without getting lucky):",
+      description: "How to Get Rich\n(without getting lucky):",
+      author: "Naval",
+      handle: "naval",
+      url: X_CANONICAL,
+      source: "x-oembed" as const,
+      bytesRead: 400,
+    };
+    expect(toClaudeInput(xJob(), lookup)).toEqual({
+      shape: "x",
+      author: "Naval",
+      handle: "naval",
+      text: "How to Get Rich (without getting lucky):",
+      url: "https://x.com/i/status/1002103360646823936",
+    });
+  });
+
+  it("titled: a looked-up page title, cleaned, with its description", () => {
+    const lookup = {
+      title: "  Hello World,\n Properly ",
+      description: "A post about saying hello.",
+      source: "page" as const,
+      bytesRead: 900,
+    };
+    expect(toClaudeInput(pageJob(), lookup)).toEqual({
+      shape: "titled",
+      title: "Hello World, Properly",
+      description: "A post about saying hello.",
+      url: "https://example.com/post/hello-world",
+    });
+  });
+
+  it("titled: a client title skips lookup, so no description, just the title and URL", () => {
+    const lookup = { title: null, source: "client" as const, bytesRead: 0 };
+    expect(toClaudeInput(pageJob({ clientTitle: "how to get rich | Medium" }), lookup)).toEqual({
+      shape: "titled",
+      title: "how to get rich | Medium",
+      url: "https://example.com/post/hello-world",
+    });
+  });
+
+  it("untitled: no usable title (none, or the URL itself), with or without a description", () => {
+    expect(
+      toClaudeInput(pageJob(), { title: null, description: "Only a description", source: "page", bytesRead: 10 }),
+    ).toEqual({ shape: "untitled", description: "Only a description", url: "https://example.com/post/hello-world" });
+    expect(toClaudeInput(pageJob(), { title: ARTICLE, source: "page", bytesRead: 10 })).toEqual({
+      shape: "untitled",
+      url: "https://example.com/post/hello-world",
+    });
+    expect(toClaudeInput(xJob(), { title: null, source: "fallback", bytesRead: 0 })).toEqual({
+      shape: "untitled",
+      url: "https://x.com/i/status/1002103360646823936",
+    });
   });
 });
 

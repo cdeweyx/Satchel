@@ -3,7 +3,7 @@
 The share-sheet Shortcut that saves a link to Satchel (D-7 in `docs/tech-plan.md`). The repo holds the generator and an unsigned template with placeholders only. Never put a real Worker URL or key in either.
 
 - `build-shortcut.py`: writes `Satchel.unsigned.shortcut`. Run `python3 -I shortcut/build-shortcut.py` (optional arg: another output path). Same inputs give a byte-identical file.
-- `Satchel.unsigned.shortcut`: the generated binary plist, committed. Read it with `plutil -p`. The root `.gitignore` ignores `*.shortcut`, so stage it with `git add -f` after regenerating.
+- `Satchel.unsigned.shortcut`: the generated binary plist, committed. Read it with `plutil -p`. The root `.gitignore` ignores `*.shortcut`, but the template is already tracked, so plain `git add` stages a regenerated copy. Only a new `.shortcut` file needs `git add -f`.
 - `glyph.txt` (from the brand step, optional): the icon. `key = value` lines, `#` comments: `glyph = <Shortcuts glyph number or bookmark>` and `color = <colour name or number>`. Colour names: red, darkorange, orange, yellow, green, teal, lightblue, blue, darkblue, violet, purple, pink, darkgray, gray, taupe. Without the file the generator uses the bookmark glyph in gray and says so.
 
 Signing (`shortcuts sign --mode anyone`) and install docs land in M4 (SAT-25). The signed file is never committed.

@@ -6,7 +6,7 @@ Mode: direct. No milestone branches. Every issue goes straight into `main` throu
 
 - Branch off a fresh `origin/main`, named with the Linear issue's `gitBranchName` (for example `conordewey3/sat-1-scaffold-worker-repo-harness-and`).
 - Open one PR into `main` per issue. The body holds the implementer's status report, the tail of `npm run check` stamped with the full head sha, and `Fixes SAT-n`.
-- Every PR that changes what works, a command, setup or the repo layout updates the README's Status and the affected section in the same PR.
+- A PR that changes setup, usage, configuration or a command a user runs updates the README in the same PR.
 - An agent review (`pr-review`) posts one PR comment whose first line is exactly `Verdict: <Ready | Ready with fixes | Not ready> @ <head sha>`.
 - The lead merges with `scripts/merge.sh <pr>`. It squash-merges only when the base is `main`, the head isn't `main`, the PR has no `needs-human` label, and a comment or review's first line is exactly `Verdict: Ready @ <full 40-char head sha>`. "Ready with fixes" and short shas never match. The user never merges.
 - Linear: opening the PR moves the issue to In Review; merging moves it to Done. Waiting on the user is "Waiting on Me".

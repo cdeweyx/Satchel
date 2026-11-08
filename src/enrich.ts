@@ -1,19 +1,27 @@
+import { type ClaudeInput, cleanTitleAndTags } from "./claude";
 import { PROPS } from "./config";
 import type { EnrichJob } from "./contract";
 import { isMissingTitle } from "./fallback-title";
 import { logEvent } from "./log";
-import { NotionError, type Properties, notion, titleProp, truncateText, urlProp } from "./notion";
+import { NotionError, type Properties, notion, tagIdsProp, titleProp, truncateText, urlProp } from "./notion";
+import { type TagOptions, getTagOptions, guardTags, invalidateTagCache } from "./tags";
 import { type LookupResult, lookupTitle } from "./title";
 
 // Background enrich, run in waitUntil after a create (D-1, "Rules in full" > Response path
-// budget). A sequence of stages, each with its own timeout and none sharing a signal:
-// lookup (5 s over all its fetches), Claude (null until SAT-15), re-read (3 s), then ONE
-// patch (3 s). Satchel never retries Notion (D-10): any NotionError logs `enrich_failed`
-// with its stage and stops, leaving the row as saved. Never throws.
+// budget). A sequence of stages, each with its own timeout: lookup (5 s over all its
+// fetches), tag options (3 s), Claude (10 s, abandoned at the 22 s deadline), re-read (3 s),
+// then ONE patch (3 s). Only Claude runs under the deadline signal; the re-read and patch
+// never do. Satchel never retries Notion (D-10): any NotionError logs `enrich_failed` with
+// its stage and stops, leaving the row as saved. The one exception is D-6's re-patch after a
+// schema change (a tag patch rejected with validation_error). Never throws.
 
 const LOOKUP_STAGE_MS = 5000;
 const REREAD_MS = 3000;
 const PATCH_MS = 3000;
+// Measured from task start. Worst case 5 + 3 + 10 + 3 + 3 = 24 s, under Cloudflare's 30 s.
+export const DEADLINE_MS = 22_000;
+
+export type EnrichOptions = { deadlineMs?: number };
 
 // A media-only X post, tested on the post text alone (never the `author: ` title, so a
 // real post ending in "...: pic.twitter.com/x" keeps its title). oEmbed shows the image as
@@ -21,13 +29,7 @@ const PATCH_MS = 3000;
 const MEDIA_ONLY_OEMBED = /^pic\.twitter\.com\/\S+$/;
 const MEDIA_ONLY_TWITTERBOT = /^(?:pic\.twitter\.com\/\S+|https:\/\/t\.co\/\S+)$/;
 
-type Stage = "reread" | "patch";
-
-// Claude stage slot. M1 has no Claude, so there's never a cleaned title; SAT-15 fills this
-// with its own timeout and signal.
-async function claudeStage(_job: EnrichJob, _lookup: LookupResult): Promise<string | null> {
-  return null;
-}
+type Stage = "schema" | "reread" | "patch";
 
 // R2: whitespace collapsed (X `<br>` newlines included) and trimmed. Empty and URL-equal
 // titles carry nothing, so they're no title. titleProp truncates at 2000.
@@ -94,6 +96,92 @@ function urlSwap(job: EnrichJob, lookup: LookupResult, now: string | null): Prop
   }
 }
 
+// R4's rule applied to Tags: the re-read's tag count, or null when the shape is off, which
+// reads as "not empty" (never overwrite what we can't read).
+function currentTagCount(properties: Record<string, unknown> | undefined): number | null {
+  const tags = (properties?.[PROPS.tags] as { multi_select?: unknown } | undefined)?.multi_select;
+  return Array.isArray(tags) ? tags.length : null;
+}
+
+function collapse(text: string | undefined): string | undefined {
+  const clean = text?.replace(/\s+/g, " ").trim();
+  return clean ? clean : undefined;
+}
+
+// What Claude sees (D-8, "Rules in full" > Claude request). A client title skips lookup, so
+// Claude gets that title and the URL only. Otherwise an X post with author and text is the
+// `x` shape, a usable looked-up title is `titled`, and anything else is `untitled`.
+export function toClaudeInput(job: EnrichJob, lookup: LookupResult): ClaudeInput {
+  const url = job.storedUrl;
+  if (job.clientTitle !== undefined) return { shape: "titled", title: job.clientTitle, url };
+  const text = collapse(lookup.description);
+  const author = collapse(lookup.author);
+  if (job.kind === "x" && author && text) {
+    return { shape: "x", author, ...(lookup.handle ? { handle: lookup.handle } : {}), text, url };
+  }
+  const description = text ? { description: text } : {};
+  const title = usableTitle(lookup.title, url);
+  if (title !== null) return { shape: "titled", title, ...description, url };
+  return { shape: "untitled", ...description, url };
+}
+
+type ClaudeStage = {
+  options: TagOptions | null; // null when the schema retrieve failed
+  title: string | null;
+  tagNames: string[];
+  claude: boolean; // Claude answered with usable output
+};
+
+const ABANDONED = Symbol("abandoned");
+
+// Resolves with `p`, or with ABANDONED once `signal` fires, even if `p` ignores the abort.
+async function untilAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T | typeof ABANDONED> {
+  if (signal.aborted) return ABANDONED;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<typeof ABANDONED>((resolve) => {
+    onAbort = () => resolve(ABANDONED);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([p, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+// Tag options (3 s, cached), then Claude under the deadline signal. Fails soft: a schema
+// failure logs `enrich_failed{stage: "schema"}` and skips Claude; an empty option list skips
+// Claude (a zero-length enum would 400, R4); a Claude failure was already logged by claude.ts;
+// the deadline logs `enrich_deadline`. Every path goes on to the re-read and the patch.
+async function claudeStage(
+  job: EnrichJob,
+  lookup: LookupResult,
+  env: Env,
+  deadline: AbortSignal,
+  start: number,
+): Promise<ClaudeStage> {
+  const none = (options: TagOptions | null): ClaudeStage => ({ options, title: null, tagNames: [], claude: false });
+
+  let options: TagOptions;
+  try {
+    options = await getTagOptions(env);
+  } catch (err) {
+    if (!(err instanceof NotionError)) throw err;
+    failed("schema", job.pageId, err);
+    return none(null);
+  }
+  if (options.size === 0) return none(options);
+
+  const names = [...options.values()].map((o) => o.name);
+  const out = await untilAbort(cleanTitleAndTags(env, toClaudeInput(job, lookup), names, deadline), deadline);
+  if (out === ABANDONED) {
+    logEvent("enrich_deadline", { pageId: job.pageId, ms: Date.now() - start });
+    return none(options);
+  }
+  if (out === null) return none(options);
+  return { options, title: out.title, tagNames: out.tags, claude: true };
+}
+
 function failed(stage: Stage | "unexpected", pageId: unknown, err: unknown): void {
   const fields: Record<string, unknown> = { ok: false, stage, pageId };
   if (err instanceof NotionError) {
@@ -105,8 +193,11 @@ function failed(stage: Stage | "unexpected", pageId: unknown, err: unknown): voi
   logEvent("enrich_failed", fields);
 }
 
-export async function enrich(job: EnrichJob, env: Env): Promise<void> {
+export async function enrich(job: EnrichJob, env: Env, opts: EnrichOptions = {}): Promise<void> {
   const start = Date.now();
+  // One signal for the whole task, fired deadlineMs after start. Only Claude listens to it.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), opts.deadlineMs ?? DEADLINE_MS);
   let stage: Stage | "unexpected" = "unexpected";
   try {
     // Lookup: skipped when the client sent a title.
@@ -115,8 +206,9 @@ export async function enrich(job: EnrichJob, env: Env): Promise<void> {
         ? { title: null, source: "client", bytesRead: 0 }
         : await lookupTitle(job.storedUrl, job.kind, AbortSignal.timeout(LOOKUP_STAGE_MS));
 
-    const claudeTitle = await claudeStage(job, lookup);
+    const claude = await claudeStage(job, lookup, env, deadline.signal, start);
 
+    // From here on nothing runs under the deadline: the re-read and patch keep their own 3 s.
     const client = notion(env);
 
     stage = "reread";
@@ -125,38 +217,64 @@ export async function enrich(job: EnrichJob, env: Env): Promise<void> {
 
     const props: Properties = {};
 
-    const name = usableTitle(claudeTitle, job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
+    // R2: Claude's title gets the same hygiene as a looked-up one; empty means none.
+    const name = usableTitle(claude.title, job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
     if (name !== null && nameUnchanged(job, currentName(page.properties))) {
       Object.assign(props, titleProp(name));
     }
     Object.assign(props, urlSwap(job, lookup, currentUrl(page.properties)));
 
-    stage = "patch";
+    // Tags only while the row has none, by option id only, guarded against the same options
+    // map the enum came from.
+    const options = claude.options;
+    let tags = options && currentTagCount(page.properties) === 0 ? guardTags(claude.tagNames, options) : [];
+    const setTags = () => {
+      delete props[PROPS.tags];
+      if (tags.length > 0) Object.assign(props, tagIdsProp(tags.map((t) => t.id)));
+    };
+    setTags();
 
-    if (Object.keys(props).length === 0) {
+    const done = (patched: boolean) =>
       logEvent("enrich", {
         ok: true,
         pageId: job.pageId,
         source: lookup.source,
         ms: Date.now() - start,
-        patched: false,
+        patched,
+        claude: claude.claude,
+        tags: patched ? tags.length : 0,
       });
+
+    stage = "patch";
+
+    if (Object.keys(props).length === 0) {
+      done(false);
       return;
     }
 
-    await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
-    logEvent("enrich", {
-      ok: true,
-      pageId: job.pageId,
-      source: lookup.source,
-      ms: Date.now() - start,
-      patched: true,
-    });
+    try {
+      await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
+    } catch (err) {
+      // D-6: a tag patch rejected with validation_error means the options changed under the
+      // cache. Refetch once, rebuild the ids from Claude's names, patch once more (R5). Any
+      // other failure, or one on the re-patch, is enrich_failed like everywhere else.
+      if (!(err instanceof NotionError && err.code === "validation_error" && tags.length > 0)) throw err;
+      invalidateTagCache();
+      stage = "schema";
+      const fresh = await getTagOptions(env);
+      stage = "patch";
+      tags = guardTags(claude.tagNames, fresh);
+      setTags();
+      await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
+    }
+    done(true);
   } catch (err) {
     try {
       failed(err instanceof NotionError ? stage : "unexpected", job?.pageId, err);
     } catch {
       // Logging itself failed; there's nothing left to do, and enrich must never throw.
     }
+  } finally {
+    clearTimeout(timer);
   }
 }
