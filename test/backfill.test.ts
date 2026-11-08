@@ -74,12 +74,25 @@ function page(r: Fixture) {
 
 type Captured = { method: string; url: string; body: any };
 
-// Notion: schema, two pages of query results, PATCH /pages. Claude: answers from `claude`.
-function mock(rows: Fixture[], claude: (title: string) => { title: string; tags: string[] } | undefined) {
+// Notion: schema, two pages of query results, GET and PATCH /pages. Claude: answers from
+// `claude`. GET /pages/:id serves `current` (the query rows plus `pages`); a test edits it
+// to play the user changing a row after the dry run. A PATCH doesn't change it.
+function mock(
+  rows: Fixture[],
+  claude: (title: string) => { title: string; tags: string[] } | undefined,
+  pages: Fixture[] = [],
+) {
   const notion: Captured[] = [];
   const claudeInputs: string[] = [];
+  const current = new Map([...rows, ...pages].map((r) => [r.id, { ...r }]));
   const split = Math.ceil(rows.length / 2);
   network.use(
+    http.get(`${NOTION}/pages/:id`, ({ request, params }) => {
+      notion.push({ method: "GET", url: request.url, body: null });
+      const row = current.get(String(params.id));
+      if (!row) return HttpResponse.json({ object: "error", status: 404, code: "object_not_found" }, { status: 404 });
+      return HttpResponse.json(page(row));
+    }),
     http.get(DS, ({ request }) => {
       notion.push({ method: "GET", url: request.url, body: null });
       return HttpResponse.json({
@@ -130,7 +143,7 @@ function mock(rows: Fixture[], claude: (title: string) => { title: string; tags:
       );
     }),
   );
-  return { notion, claudeInputs };
+  return { notion, claudeInputs, current };
 }
 
 function tmpDir(): string {
@@ -288,12 +301,23 @@ describe("backfill apply", () => {
       newUrl: "https://b.com/y",
     },
   ];
+  // The two pages as Notion holds them at apply time, unedited since the dry run.
+  const PAGES: Fixture[] = PLAN.map((e) => ({
+    id: e.pageId,
+    title: e.oldTitle,
+    url: e.oldUrl,
+    tags: e.oldTags,
+    archived: e.archived,
+  }));
+  const writePlan = (out: string) => {
+    writeFileSync(`${out}/plan.jsonl`, PLAN.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    return `${out}/plan.jsonl`;
+  };
 
   it("writes exactly the 2 rows in the plan and logs both old values before each write", async () => {
     const out = tmpDir();
-    const planPath = `${out}/plan.jsonl`;
-    writeFileSync(planPath, PLAN.map((e) => JSON.stringify(e)).join("\n") + "\n");
-    const { notion } = mock([], () => undefined);
+    const planPath = writePlan(out);
+    const { notion } = mock([], () => undefined, PAGES);
 
     // At each PATCH, the row's old values must already be in the log.
     const loggedAtPatch: string[][] = [];
@@ -327,6 +351,62 @@ describe("backfill apply", () => {
       { pageId: "p-2", fields: ["title"], title: "two - YouTube", tags: ["Career"], url: "https://b.com/y" },
     ]);
     expect(d.lines).toContain("Rows written: 2 of 2 in the plan");
+    expect(d.lines).toContain("Skipped (changed since dry run): 0");
+    // Each row is re-read right before its write.
+    expect(notion.filter((r) => r.url.includes("/pages/")).map((r) => `${r.method} ${r.url.split("/").pop()}`)).toEqual([
+      "GET p-1",
+      "PATCH p-1",
+      "GET p-2",
+      "PATCH p-2",
+    ]);
+  });
+
+  it.each([
+    ["Name", { title: "My Own Title" }],
+    ["Tags", { tags: ["Growth"] }],
+    ["URL", { url: "https://a.com/elsewhere" }],
+    ["trash", { inTrash: true }],
+  ] as const)("skips a row whose %s changed after the dry run and doesn't write it", async (_what, edit) => {
+    const out = tmpDir();
+    const planPath = writePlan(out);
+    const { notion, current } = mock([], () => undefined, PAGES);
+    Object.assign(current.get("p-1")!, edit);
+
+    const d = deps();
+    await apply(d, planPath, out);
+
+    const patches = notion.filter((r) => r.method === "PATCH").map((r) => r.url.split("/").pop());
+    expect(patches).toEqual(["p-2"]);
+    expect(d.lines).toContain("  p-1 skipped: changed since dry run");
+    expect(d.lines).toContain("Rows written: 1 of 2 in the plan");
+    expect(d.lines).toContain("Skipped (changed since dry run): 1");
+    expect(readJsonl<RollbackEntry>(`${out}/rollback.jsonl`).map((e) => e.pageId)).toEqual(["p-2"]);
+  });
+
+  it("writes the rollback entry from the fresh read, not the plan", async () => {
+    const out = tmpDir();
+    // Plan says p-3 had Career, Product; Notion now holds the same tags in the other order
+    // (not an edit, so the row is written) and the log records Notion's copy.
+    const entry: PlanEntry = {
+      pageId: "p-3",
+      archived: true,
+      oldTitle: "three | Blog",
+      newTitle: "Three",
+      oldTags: ["Career", "Product"],
+      newTags: ["Career", "Product"],
+      oldUrl: "https://c.com/z",
+      newUrl: "https://c.com/z",
+    };
+    writeFileSync(`${out}/plan.jsonl`, JSON.stringify(entry) + "\n");
+    const fresh: Fixture = { id: "p-3", title: "three | Blog", url: "https://c.com/z", tags: ["Product", "Career"], archived: true };
+    const { notion } = mock([], () => undefined, [fresh]);
+
+    await apply(deps(), `${out}/plan.jsonl`, out);
+
+    expect(notion.filter((r) => r.method === "PATCH")).toHaveLength(1);
+    expect(readJsonl<RollbackEntry>(`${out}/rollback.jsonl`)).toEqual([
+      { pageId: "p-3", fields: ["title"], title: "three | Blog", tags: ["Product", "Career"], url: "https://c.com/z" },
+    ]);
   });
 
   it("refuses a plan whose tags don't map to options before writing anything", async () => {

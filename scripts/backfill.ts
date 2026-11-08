@@ -9,8 +9,9 @@
 //
 // --dry-run writes nothing to Notion: it writes <out>/plan.jsonl (only rows that change) and
 // <out>/duplicates.json, and prints examples, counts, Claude cost and elapsed time.
-// --apply writes only the rows in the plan, and only the properties that change in each,
-// appending the row's old values to <out>/rollback.jsonl before each write.
+// --apply writes only the rows in the plan, and only the properties that change in each. It
+// re-reads each page first: a row whose Name, Tags or URL changed since the dry run is
+// skipped; otherwise its fresh values go to <out>/rollback.jsonl before the write.
 // --rollback writes the logged old values back, newest log line first.
 //
 // One rulebook: the Claude call, the tag guard and canonicalization come from src/ unchanged.
@@ -150,6 +151,7 @@ function notionClient(deps: Deps, version: string) {
           ...(cursor ? { start_cursor: cursor } : {}),
         },
       ),
+    retrievePage: (id: string) => call<unknown>("GET", `/pages/${encodeURIComponent(id)}`),
     patchPage: (id: string, properties: Properties) =>
       call<unknown>("PATCH", `/pages/${encodeURIComponent(id)}`, { properties }),
   };
@@ -176,28 +178,34 @@ async function readTagOptions(n: Notion, l: Lib): Promise<{ options: TagOptions;
   return { options, names: [...options.values()].map((o) => o.name) };
 }
 
-async function readRows(n: Notion, l: Lib): Promise<Row[]> {
+// A page's Name, URL, Tags and Archived as the script reads them. Null for a trashed page.
+function rowFromPage(l: Lib, raw: unknown): Row | null {
   const { PROPS } = l.config;
+  const p = raw as { id?: string; in_trash?: boolean; archived?: boolean; properties?: Record<string, any> };
+  if (typeof p.id !== "string" || p.in_trash === true || p.archived === true) return null;
+  const props = p.properties ?? {};
+  const title = Array.isArray(props[PROPS.name]?.title)
+    ? (props[PROPS.name].title as { plain_text?: string; text?: { content?: string } }[])
+        .map((t) => t.plain_text ?? t.text?.content ?? "")
+        .join("")
+    : "";
+  const url = typeof props[PROPS.url]?.url === "string" ? (props[PROPS.url].url as string) : null;
+  const tags = Array.isArray(props[PROPS.tags]?.multi_select)
+    ? (props[PROPS.tags].multi_select as { name?: string }[])
+        .map((t) => t.name)
+        .filter((t): t is string => typeof t === "string")
+    : [];
+  return { pageId: p.id, archived: props[PROPS.archived]?.checkbox === true, title, url, tags };
+}
+
+async function readRows(n: Notion, l: Lib): Promise<Row[]> {
   const rows: Row[] = [];
   let cursor: string | undefined;
   do {
     const page = await n.queryPage(cursor);
     for (const raw of page.results ?? []) {
-      const p = raw as { id?: string; in_trash?: boolean; archived?: boolean; properties?: Record<string, any> };
-      if (typeof p.id !== "string" || p.in_trash === true || p.archived === true) continue;
-      const props = p.properties ?? {};
-      const title = Array.isArray(props[PROPS.name]?.title)
-        ? (props[PROPS.name].title as { plain_text?: string; text?: { content?: string } }[])
-            .map((t) => t.plain_text ?? t.text?.content ?? "")
-            .join("")
-        : "";
-      const url = typeof props[PROPS.url]?.url === "string" ? (props[PROPS.url].url as string) : null;
-      const tags = Array.isArray(props[PROPS.tags]?.multi_select)
-        ? (props[PROPS.tags].multi_select as { name?: string }[])
-            .map((t) => t.name)
-            .filter((t): t is string => typeof t === "string")
-        : [];
-      rows.push({ pageId: p.id, archived: props[PROPS.archived]?.checkbox === true, title, url, tags });
+      const row = rowFromPage(l, raw);
+      if (row) rows.push(row);
     }
     cursor = page.has_more && page.next_cursor ? page.next_cursor : undefined;
   } while (cursor);
@@ -416,6 +424,11 @@ function sameTags(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((t, i) => t === b[i]);
 }
 
+// Order-free: a reshuffle of the same tags isn't an edit worth skipping a row for.
+function sameTagSet(a: string[], b: string[]): boolean {
+  return sameTags([...a].sort(), [...b].sort());
+}
+
 // Tag names → option ids through guardTags. Refuses (throws) rather than drop a tag.
 function tagIds(l: Lib, names: string[], options: TagOptions, pageId: string): string[] {
   const refs = l.tags.guardTags(names, options);
@@ -447,20 +460,41 @@ export async function apply(deps: Deps, planPath: string, out: string): Promise<
       Object.assign(props, l.notion.urlProp(e.newUrl));
       fields.push("url");
     }
-    const rollback: RollbackEntry = { pageId: e.pageId, fields, title: e.oldTitle, tags: e.oldTags, url: e.oldUrl };
-    return { pageId: e.pageId, props, rollback };
+    return { entry: e, props, fields };
   });
 
   mkdirSync(out, { recursive: true });
   const logPath = `${out}/rollback.jsonl`;
   let written = 0;
-  for (const w of writes) {
-    if (w.rollback.fields.length === 0) continue;
-    appendFileSync(logPath, JSON.stringify(w.rollback) + "\n");
-    await n.patchPage(w.pageId, w.props);
+  let skipped = 0;
+  for (const { entry: e, props, fields } of writes) {
+    if (fields.length === 0) continue;
+    // Re-read right before writing. A row the user edited (or trashed) since the dry run is
+    // skipped; otherwise the rollback entry holds what's in Notion now, not the plan's copy.
+    const current = rowFromPage(l, await n.retrievePage(e.pageId));
+    if (
+      current === null ||
+      current.title !== e.oldTitle ||
+      current.url !== e.oldUrl ||
+      !sameTagSet(current.tags, e.oldTags)
+    ) {
+      deps.log(`  ${e.pageId} skipped: changed since dry run`);
+      skipped++;
+      continue;
+    }
+    const rollback: RollbackEntry = {
+      pageId: e.pageId,
+      fields,
+      title: current.title,
+      tags: current.tags,
+      url: current.url,
+    };
+    appendFileSync(logPath, JSON.stringify(rollback) + "\n");
+    await n.patchPage(e.pageId, props);
     written++;
   }
   deps.log(`Rows written: ${written} of ${plan.length} in the plan`);
+  deps.log(`Skipped (changed since dry run): ${skipped}`);
   deps.log(`Old values logged to ${logPath}`);
 }
 
