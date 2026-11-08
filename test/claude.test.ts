@@ -192,12 +192,12 @@ describe("request shape", () => {
     expect(prompt).not.toContain("Pick 1 to 3 tags");
   });
 
-  it("system prompt gives a one-line meaning for exactly these eleven tags (Cool retired, Projects and History added)", () => {
+  it("system prompt gives a one-line meaning for exactly these fourteen tags (SAT-40: Product and Career sharpened; Design, Philosophy, Communication gated)", () => {
     expect(section(systemPrompt(TAGS), "What some tags mean here:", "Examples (title → tags):")).toEqual([
       "What some tags mean here:",
       "- Tech: the business and strategy of the tech industry, not anything technical.",
-      "- Product: product management and building products.",
-      "- Career: doing well at work, the craft of your job, teams, interviewing.",
+      "- Product: the most common tag here: building, shipping and thinking about products, and the work of the people who make them (PMs, founders, designers on product teams).",
+      "- Career: doing well at work: craft, growth in a role, teams, hiring, interviewing; often paired with Product.",
       "- Self-Improvement: life advice and personal habits.",
       "- Mindfulness: meaning and inner life.",
       "- Thinking: essays about ideas and how to think.",
@@ -206,6 +206,9 @@ describe("request shape", () => {
       "- Culture: cultural commentary.",
       "- Projects: things people built (apps, tools, side projects).",
       "- History: how things came to be, histories of objects, places and technology.",
+      "- Design: visual and interaction design craft only; a product or strategy piece that mentions design isn't Design.",
+      "- Philosophy: only when the piece is centrally about philosophy.",
+      "- Communication: only when the piece is centrally about communication.",
     ]);
   });
 
