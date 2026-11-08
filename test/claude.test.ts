@@ -2,7 +2,7 @@
 import { env } from "cloudflare:workers";
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ClaudeInput, cleanTitleAndTags, systemPrompt, userMessage } from "../src/claude";
+import { type ClaudeInput, cleanTitleAndTags, outputSchema, systemPrompt, userMessage } from "../src/claude";
 import fixturesText from "./fixtures/claude.json?raw";
 import { network } from "./network";
 
@@ -157,13 +157,17 @@ describe("request shape", () => {
       messages: [{ role: "user", content: first.message }],
     });
 
-    const raw = JSON.stringify(req.body);
-    expect(raw).not.toContain("maxItems");
-    expect(raw).not.toContain("temperature");
-    expect(raw).not.toContain("top_p");
-    expect(raw).not.toContain("top_k");
-    expect(raw).not.toContain("thinking");
-    expect(raw).not.toContain("fallbacks");
+    // Structural, not a word scan: the system prompt's own text (e.g. "thinking about products")
+    // must not be able to trip these.
+    for (const key of ["thinking", "temperature", "top_p", "top_k", "fallbacks"]) {
+      expect(req.body).not.toHaveProperty(key);
+    }
+    expect(Object.keys(req.body).sort()).toEqual(["max_tokens", "messages", "model", "output_config", "system"]);
+    expect(req.body.output_config).toEqual({
+      effort: "low",
+      format: { type: "json_schema", schema: outputSchema(TAGS) },
+    });
+    expect(JSON.stringify(req.body.output_config)).not.toContain("maxItems");
   });
 
   it("system prompt asks for Title Case and lists the allowed tags", () => {
