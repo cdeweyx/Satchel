@@ -26,7 +26,7 @@ Saving a URL that's already in the database updates its status, so saving it as 
 
 1. `POST /save` checks the `x-satchel-key` header, cleans the URL, and looks for an existing row.
 2. A new URL gets a new row (your title if you sent one, otherwise one built from the URL). A known URL gets its status updated. Then the Worker answers.
-3. In the background, it looks up the real title (the page's `<title>`, or oEmbed for X posts, YouTube, Spotify and similar), asks Claude Haiku for a clean title and tags, and updates the row once. A new row also gets the article's preview image (or, without one, a one-paragraph summary) in its page body, so Notion's gallery cards show it.
+3. In the background, it looks up the real title (the page's `<title>`, or oEmbed for X posts, YouTube, Spotify and similar), asks Claude Haiku for a clean title and tags, and updates the row once. A new row also gets the article's preview image (or, without one, a one-paragraph summary) in its page body when the page has one, so Notion's gallery cards show it.
 
 If Claude fails, the looked-up title still lands. If you've edited the title in Notion since saving, Satchel leaves it alone.
 
@@ -34,7 +34,7 @@ If Claude fails, the looked-up title still lands. If you've edited the title in 
 
 - **A Notion database** for your links, and permission to add a connection to it.
 - **A Cloudflare account.** The free plan is enough.
-- **An Anthropic API key** from [console.anthropic.com](https://console.anthropic.com). Each save costs a fraction of a cent.
+- **An Anthropic API key** from [console.anthropic.com](https://console.anthropic.com). Each save costs a fraction of a cent. A new account has no credit, so add some first. Without it, `/health` still says `claude: ok`, but titles and tags never get cleaned up.
 - **Node** (a current LTS release) to install and deploy.
 - **For the iPhone Shortcut:** a Mac with the Shortcuts app, and [gitleaks](https://github.com/gitleaks/gitleaks) (`brew install gitleaks`).
 
@@ -61,9 +61,9 @@ If Claude fails, the looked-up title still lands. If you've edited the title in 
    | `Favorite` | checkbox | On for `favorite` |
    | `Media` | checkbox | On for video, music and podcast links |
 
-   Add the `Tags` options you want Claude to pick from. Satchel never adds tag options or properties. If your names differ (say `Title` instead of `Name`), edit the values in `PROPS` in `src/config.ts`. It's the only place Satchel names a property.
+   Add the `Tags` options you want Claude to pick from. With no options, Claude doesn't run at all, so titles don't get cleaned up either. Satchel never adds tag options or properties. If your names differ (say `Title` instead of `Name`), edit the values in `PROPS` in `src/config.ts`. It's the only place Satchel names a property.
 
-4. **Find your two Notion IDs and start the secrets file.** The database ID is the 32-character string in the database's URL. The data source ID comes from the Notion API:
+4. **Find your two Notion IDs and start the secrets file.** For the database ID, open the database as a full page (not inline on another page) and copy the 32 characters before `?v=` in its URL. The data source ID comes from the Notion API:
 
    ```sh
    curl -s https://api.notion.com/v1/databases/<database id> \
@@ -139,20 +139,20 @@ If Claude fails, the looked-up title still lands. If you've edited the title in 
 | `claude` | The Anthropic key works. |
 | `oembed` | X's oEmbed endpoint answers (used for X post titles). |
 
-Each field is `ok`, `auth_failed` (bad token or key), `not_found`, or `error <status>` (`error 0` means no response, usually a timeout). `notion: "not_found"` means the database isn't shared with your integration: add it under ••• then **Connections**.
+Each field is `ok`, `auth_failed` (bad token or key), `not_found`, or `error <status>` (`error 0` means no response, usually a timeout). `notion: "not_found"` means the database isn't shared with your integration (add it under ••• then **Connections**) or `NOTION_DATA_SOURCE_ID` is wrong.
 
 ### When a save fails
 
-Satchel never retries Notion. If Notion rejects a save, the Worker answers at once with a 502 and Notion's own error code, so nothing is half-saved and you can send it again:
+Satchel never retries Notion. If Notion rejects a save, the Worker answers at once with a 502 and Notion's own error code. Sending it again is always safe, since a re-save updates the same row:
 
 ```json
 { "ok": false, "error": "notion_object_not_found" }
 ```
 
-- `notion_object_not_found`: the database isn't shared with your integration, or an ID is wrong. Share it via ••• then Connections, and check both IDs.
+- `notion_object_not_found`: the database isn't shared with your integration, or `NOTION_DATA_SOURCE_ID` is wrong. Share it via ••• then Connections, and check that ID.
 - `notion_unauthorized`: the Notion token is wrong or revoked.
 - `notion_validation_error`: a property name or type doesn't match `PROPS` in `src/config.ts`.
-- `notion_timeout` or `notion_unreachable`: Notion didn't answer in time. Try again.
+- `notion_timeout` or `notion_unreachable`: Notion didn't answer in time. The row may already exist, and if so it won't get its clean title or tags. Sending it again is still safe.
 
 The background step (title, tags, page body) doesn't retry either. If it fails, the row stays as it was saved.
 
@@ -163,14 +163,14 @@ Other errors are JSON too: 401 `unauthorized` (missing or wrong key), 400 `inval
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick the `extension/` folder in your clone.
 3. Open Satchel's options, any of three ways: right-click the Satchel toolbar icon, then **Options**; open the popup and pick **Set up Satchel**; or on `chrome://extensions`, click **Details** on Satchel, then **Extension options**. If you don't see the icon, pin it from the puzzle-piece menu.
-4. Paste your Worker URL (`https://satchel.<you>.workers.dev`) and your `SATCHEL_KEY`.
+4. Fill in **Worker URL** (`https://satchel.<you>.workers.dev`) and **Save key** (your `SATCHEL_KEY`).
 5. Click **Save**, then **Test**. It should list Notion, Claude and X oEmbed as `ok`. "Key rejected" means the key doesn't match.
 
 Settings stay in that Chrome profile and never sync, so repeat these steps in each profile you save from.
 
 To save a page:
 
-- **Alt+Shift+S** opens the popup. Rebind it at `chrome://extensions/shortcuts`.
+- **Alt+Shift+S** (Option+Shift+S on a Mac) opens the popup. Rebind it at `chrome://extensions/shortcuts`.
 - **L** sends to inbox, **R** marks as archived, and **F** favorites (for 3 seconds after R). Esc closes. Clicking a row works too.
 - **A red "!" on the icon** means the last save failed after the popup closed, usually because of the key. The next successful save clears it.
 
@@ -197,13 +197,13 @@ To save, tap Share, then **Satchel**, then **Send to inbox**, **Mark as archived
 
 ## See it as a gallery in Notion
 
-Each new row gets the article's preview image as its page body, or a short summary when there's no image. Add a **Gallery** view to your database and set its card preview to **Page content**, and each card shows that image. Rows that were in the database before Satchel don't have a page body.
+Each new row gets the article's preview image as its page body when the page has one, or a short summary when it has only a description. An X post without a photo gets nothing. Add a **Gallery** view to your database and set its card preview to **Page content**, and each card shows that image. Rows that were in the database before Satchel don't have a page body.
 
 ## Configure
 
 - **Property names:** edit `PROPS` in `src/config.ts` to match your database, then redeploy.
 - **Database and data source IDs:** set at deploy time from your secrets file, never in the repo.
-- **Tags:** Satchel reads the `Tags` options live from your database, so add or rename options in Notion.
+- **Tags:** Satchel reads the `Tags` options from your database, so add or rename options in Notion. Changes show up within about 10 minutes.
 
 ## Develop
 
@@ -224,7 +224,11 @@ npx wrangler dev    # local Worker on http://localhost:8787
 
 ## Contributing
 
-Issues and PRs are welcome. Run `npm run check` before opening a PR, and never commit a secret, Notion ID or Worker URL. The repo's conventions are in [`CLAUDE.md`](CLAUDE.md).
+Issues and PRs are welcome. Three rules:
+
+- Run `npm run check` before opening a PR.
+- Tests never hit the network. Mock every outbound request.
+- Never commit a secret, Notion ID or Worker URL.
 
 ## License
 
