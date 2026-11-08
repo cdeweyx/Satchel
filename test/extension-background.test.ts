@@ -77,6 +77,13 @@ describe("save request", () => {
       },
     ]);
   });
+
+  it("SAT-58: passes the popup's image and description through to the Worker", async () => {
+    onSave(() => HttpResponse.json({ ok: true, id: "page-1" }));
+    const preview = { image: "https://cdn.example.com/cover.png", description: "The post, in a sentence." };
+    await mock.sendMessage({ type: "save", ...page, ...preview });
+    expect(seen.map((r) => r.body)).toEqual([{ url: page.url, title: page.title, status: "later", ...preview }]);
+  });
 });
 
 describe("success rule: only a JSON body with ok: true", () => {

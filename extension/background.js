@@ -2,8 +2,10 @@
 //
 // Contract for the popup (SAT-20):
 //
-//   Message  chrome.runtime.sendMessage({type: "save", url, title, status})
-//            status is "later" | "read" | "favorite"; title may be omitted.
+//   Message  chrome.runtime.sendMessage({type: "save", url, title, status, image, description})
+//            status is "later" | "read" | "favorite"; title may be omitted. image and
+//            description (SAT-58) are the page's preview read from the tab, each omitted
+//            when there isn't one; they go to the Worker as they are.
 //   Reply    {ok: true, id} or {ok: false, error}. `error` is the Worker's error code,
 //            or "unexpected response" for anything else (non-JSON body, network error,
 //            no Worker URL or key in chrome.storage.local).
@@ -80,7 +82,7 @@ async function saveAndBadge(message) {
 }
 
 // Never throws: every outcome becomes {ok: true, id} or {ok: false, error}.
-async function save({ url, title, status }) {
+async function save({ url, title, status, image, description }) {
   let response;
   try {
     const { workerUrl, key } = await chrome.storage.local.get(["workerUrl", "key"]);
@@ -88,7 +90,7 @@ async function save({ url, title, status }) {
     response = await fetch(`${String(workerUrl).replace(/\/$/, "")}/save`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-satchel-key": key },
-      body: JSON.stringify({ url, title, status }),
+      body: JSON.stringify({ url, title, status, image, description }),
     });
   } catch {
     return { ok: false, error: UNEXPECTED };
