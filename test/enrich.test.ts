@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { http, HttpResponse } from "msw";
@@ -9,6 +10,7 @@ import worker from "../src/index";
 import { invalidateTagCache } from "../src/tags";
 import { lookupTitle } from "../src/title";
 import { PAGE_UA } from "../src/title/page";
+import articleText from "./fixtures/x-article.json?raw";
 import { network } from "./network";
 
 const API = "https://api.notion.com/v1";
@@ -1611,4 +1613,143 @@ describe("SAT-42: an X post's Name is the post text, no author, when Claude fail
       expect.objectContaining({ ok: true, source: "fallback", patched: false, claude: false }),
     ]);
   });
+});
+
+// SAT-43: an X Article (Aaron Levie's x.com/levie/status/2048950940661932319). oEmbed's post
+// text is only a t.co link; lookupX reads x.com's page as Twitterbot for the article title, so
+// enrich treats it as a post with text. Fixture from the lead's live probe (2026-11-08).
+describe("SAT-43: an X Article gets a real title", () => {
+  const A = JSON.parse(articleText) as {
+    storedUrl: string;
+    canonicalUrl: string;
+    oembed: Record<string, unknown>;
+    page: { ogTitle: string; ogDescription: string };
+  };
+  // Real oEmbed escapes `<` and `>` as \u003c and \u003e inside the JSON string.
+  const OEMBED_BODY = JSON.stringify(A.oembed).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+  const ogPage = (ogTitle: string, ogDescription: string) =>
+    `<html><head><meta property="og:title" content="${ogTitle}"/>` +
+    `<meta property="og:description" content="${ogDescription}"/></head><body></body></html>`;
+  const articleJob = () => xJob({ storedUrl: A.storedUrl, fallbackTitle: "@levie on X" });
+  const PLACEHOLDER = { name: "@levie on X", url: A.storedUrl, tags: [] };
+
+  it("criteria 1 and 2: Claude gets the x shape with the article title; its title and tags land, URL swapped", async () => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, OEMBED_BODY);
+    htmlPage(A.storedUrl, record, ogPage(A.page.ogTitle, A.page.ogDescription));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "The Never-Ending Last Mile of Work", tags: ["AI", "Product"] }));
+    mockNotion(record, PLACEHOLDER);
+
+    await runInWaitUntil(articleJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${OEMBED}`,
+      `GET ${A.storedUrl}`,
+      `GET ${SCHEMA_URL}`,
+      `POST ${MESSAGES}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    expect(seen[1]!.userAgent).toBe("Twitterbot/1.0");
+    expect((seen[3]!.body as ClaudeBody).messages).toEqual([
+      {
+        role: "user",
+        content: `X post by Aaron Levie (@levie): "The never-ending last mile of work"\nURL: ${A.storedUrl}`,
+      },
+    ]);
+    expect(seen[5]!.body).toEqual({
+      properties: {
+        ...nameProp("The Never-Ending Last Mile of Work"),
+        [PROPS.url]: { url: A.canonicalUrl },
+        [PROPS.tags]: { multi_select: [{ id: "opt-ai" }, { id: "opt-product" }] },
+      },
+    });
+    const line = logs().find((l) => l.event === "enrich")!;
+    expect(line).toMatchObject({ ok: true, source: "x-oembed", patched: true, claude: true, tags: 2 });
+    expect(line).not.toHaveProperty("reason");
+  });
+
+  it("criterion 2 with Claude failing: the Name is the article title alone, no author (SAT-42)", async () => {
+    captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, OEMBED_BODY);
+    htmlPage(A.storedUrl, record, ogPage(A.page.ogTitle, A.page.ogDescription));
+    mockSchema(record, OPTIONS);
+    mockClaude(record, claude401);
+    mockNotion(record, PLACEHOLDER);
+
+    await runInWaitUntil(articleJob());
+
+    expect(seen.find((s) => s.method === "PATCH")!.body).toEqual({
+      properties: { ...nameProp("The never-ending last mile of work"), [PROPS.url]: { url: A.canonicalUrl } },
+    });
+  });
+
+  it.each([
+    ["og:description empty (an image-only post)", ogPage(A.page.ogTitle, "")],
+    ["og:description only a URL", ogPage("Aaron Levie on X: &quot;https://t.co/Lv1eB0x&quot; / X", "https://t.co/Lv1eB0x")],
+    [
+      "X's generic text",
+      ogPage("X", "From breaking news and entertainment to sports and politics, get the full story with all the live commentary."),
+    ],
+  ])("criterion 3: a page that describes no post (%s) keeps the placeholder, no Claude, no tags", async (_label, html) => {
+    const logs = captureLogs();
+    const { seen, record } = recorder();
+    mockOembed(record, OEMBED_BODY);
+    htmlPage(A.storedUrl, record, html);
+    mockSchema(record, OPTIONS);
+    mockClaude(record, () => claudeAnswer({ title: "X Post", tags: ["AI"] }));
+    mockNotion(record, PLACEHOLDER);
+
+    await runInWaitUntil(articleJob());
+
+    expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+      `GET ${OEMBED}`,
+      `GET ${A.storedUrl}`,
+      `GET ${PAGE_URL}`,
+      `PATCH ${PAGE_URL}`,
+    ]);
+    expect(seen[3]!.body).toEqual({ properties: { [PROPS.url]: { url: A.canonicalUrl } } });
+    expect(logs()).toEqual([
+      expect.objectContaining({ event: "enrich", ok: true, source: "x-oembed", claude: false, reason: "no_text_x", tags: 0 }),
+    ]);
+  });
+
+  // Real wait: AbortSignal.timeout runs on workerd's clock, which fake timers don't drive.
+  it(
+    "criterion 1: a hanging page ends at its 4 s fetch timeout, inside the 5 s stage; no text, placeholder kept",
+    { timeout: 15_000 },
+    async () => {
+      const logs = captureLogs();
+      const { seen, record } = recorder();
+      mockOembed(record, OEMBED_BODY);
+      network.use(
+        http.get(A.storedUrl, async ({ request }) => {
+          await record(request);
+          return new Promise<Response>(() => {});
+        }),
+      );
+      mockSchema(record, OPTIONS);
+      mockClaude(record, () => claudeAnswer({ title: "X Post", tags: ["AI"] }));
+      mockNotion(record, PLACEHOLDER);
+
+      await runInWaitUntil(articleJob());
+
+      const reread = seen.find((s) => s.url === PAGE_URL)!;
+      expect(reread.at).toBeGreaterThanOrEqual(3900);
+      expect(reread.at).toBeLessThan(5000);
+      expect(seen.map((s) => `${s.method} ${s.url.split("?")[0]}`)).toEqual([
+        `GET ${OEMBED}`,
+        `GET ${A.storedUrl}`,
+        `GET ${PAGE_URL}`,
+        `PATCH ${PAGE_URL}`,
+      ]);
+      expect(seen[3]!.body).toEqual({ properties: { [PROPS.url]: { url: A.canonicalUrl } } });
+      expect(logs()).toEqual([
+        expect.objectContaining({ event: "enrich", ok: true, source: "x-oembed", claude: false, reason: "no_text_x" }),
+      ]);
+    },
+  );
 });

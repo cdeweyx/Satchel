@@ -6,6 +6,7 @@ import { logEvent } from "./log";
 import { NotionError, type Properties, notion, tagIdsProp, titleProp, truncateText, urlProp } from "./notion";
 import { type TagOptions, getTagOptions, guardTags, invalidateTagCache } from "./tags";
 import { type LookupResult, lookupTitle } from "./title";
+import { isOnlyLinks } from "./title/x";
 
 // Background enrich, run in waitUntil after a create (D-1, "Rules in full" > Response path
 // budget). A sequence of stages, each with its own timeout: lookup (5 s over all its
@@ -23,14 +24,6 @@ export const DEADLINE_MS = 22_000;
 
 export type EnrichOptions = { deadlineMs?: number };
 
-// An X post with no text of its own: only media or links (SAT-12, SAT-37). Tested on the
-// post text alone (never the `author: ` title, so a real post ending in "...: pic.twitter.com/x"
-// keeps its title). A link reads as X shows it: a full URL (t.co or any other, Twitterbot's
-// og:description), a pic.twitter.com media link, or a display URL (host plus a path, maybe
-// cut with "…"). A display URL needs the path, so "Node.js", "Node.js…" and "box.com" stay text.
-const LINK = String.raw`(?:https?:\/\/\S+|pic\.twitter\.com\/\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*)`;
-const NO_POST_TEXT = new RegExp(`^${LINK}(?: ${LINK})*$`, "i");
-
 type Stage = "schema" | "reread" | "patch";
 
 // R2: whitespace collapsed (X `<br>` newlines included) and trimmed. Empty and URL-equal
@@ -42,10 +35,12 @@ export function usableTitle(title: string | null | undefined, storedUrl: string)
   return clean;
 }
 
-// R2: an X lookup whose post text is only media or links has no title worth writing.
+// R2: an X lookup whose post text is only media or links has no title worth writing
+// (isOnlyLinks in title/x.ts). Since SAT-43 lookupX has already tried x.com's page for the
+// text of a link-only post (an X Article), so this is a post the page doesn't describe either.
 export function isNoTextX(lookup: LookupResult): boolean {
   if (lookup.source !== "x-oembed" && lookup.source !== "x-twitterbot") return false;
-  return NO_POST_TEXT.test((lookup.description ?? "").replace(/\s+/g, " ").trim());
+  return isOnlyLinks(lookup.description);
 }
 
 // SAT-42: an X post's Name is the post text alone, no author. lookupX's raw title is

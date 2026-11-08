@@ -1,0 +1,27 @@
+{
+  "_about": "SAT-43: an X Article post, from the lead's live probe of x.com/levie/status/2048950940661932319 (2026-11-08). oEmbed's post text is only a t.co link (to x.com/i/article/2048942893025669122); x.com's page read as Twitterbot/1.0 carries the article title in og:title and og:description, written here as X serves them (entity-encoded attribute values). The t.co path and the date anchor are stand-ins (the date is the one the post id encodes); the og values are verbatim from the probe.",
+  "id": "2048950940661932319",
+  "storedUrl": "https://x.com/i/status/2048950940661932319",
+  "canonicalUrl": "https://x.com/levie/status/2048950940661932319",
+  "oembed": {
+    "url": "https://x.com/levie/status/2048950940661932319",
+    "author_name": "Aaron Levie",
+    "author_url": "https://twitter.com/levie",
+    "html": "<blockquote class=\"twitter-tweet\" data-dnt=\"true\"><p lang=\"en\" dir=\"ltr\"><a href=\"https://t.co/Lv1eB0x\">https://t.co/Lv1eB0x</a></p>&mdash; Aaron Levie (@levie) <a href=\"https://twitter.com/levie/status/2048950940661932319?ref_src=twsrc%5Etfw\">April 28, 2026</a></blockquote>\n",
+    "width": 550,
+    "height": null,
+    "type": "rich",
+    "cache_age": "3153600000",
+    "provider_name": "Twitter",
+    "provider_url": "https://twitter.com",
+    "version": "1.0"
+  },
+  "page": {
+    "ogTitle": "Aaron Levie on X: &quot;The never-ending last mile of work&quot; / X",
+    "ogDescription": "The never-ending last mile of work…"
+  },
+  "articleUrlPage": {
+    "_about": "x.com/i/article/<id> itself, which Satchel never fetches: only X's generic title.",
+    "title": "X - The Everything App"
+  }
+}
