@@ -16,7 +16,7 @@ const PRESS_MS = 160;
 export const WORDS = {
   keyRejected: "Key rejected",
   unreachable: "Can't reach Worker",
-  missing: "Add the Worker URL and save key first.",
+  missing: "Add the Worker URL and Satchel key first.",
   badUrl: "The Worker URL should look like https://satchel.you.workers.dev",
   saved: "Saved.",
   testing: "Testing…",

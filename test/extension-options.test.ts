@@ -299,7 +299,7 @@ describe("Test", () => {
     await open({ workerUrl: WORKER });
     await clickTest();
     expect(seen).toEqual([]);
-    expect(status()).toBe("Add the Worker URL and save key first.");
+    expect(status()).toBe("Add the Worker URL and Satchel key first.");
   });
 
   it("a new Test clears the last result", async () => {
