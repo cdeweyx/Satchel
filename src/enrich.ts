@@ -1,5 +1,162 @@
+import { PROPS } from "./config";
 import type { EnrichJob } from "./contract";
+import { isMissingTitle } from "./fallback-title";
+import { logEvent } from "./log";
+import { NotionError, type Properties, notion, titleProp, truncateText, urlProp } from "./notion";
+import { type LookupResult, lookupTitle } from "./title";
 
-// Background title lookup and Claude enrich, run in waitUntil. Stub: SAT-12 fills the body.
-// Signature is final. Must never throw: failures log `enrich_failed` (D-9).
-export async function enrich(job: EnrichJob, env: Env): Promise<void> {}
+// Background enrich, run in waitUntil after a create (D-1, "Rules in full" > Response path
+// budget). A sequence of stages, each with its own timeout and none sharing a signal:
+// lookup (5 s over all its fetches), Claude (null until SAT-15), re-read (3 s), then ONE
+// patch (3 s). Satchel never retries Notion (D-10): any NotionError logs `enrich_failed`
+// with its stage and stops, leaving the row as saved. Never throws.
+
+const LOOKUP_STAGE_MS = 5000;
+const REREAD_MS = 3000;
+const PATCH_MS = 3000;
+
+// A media-only X post, tested on the post text alone (never the `author: ` title, so a
+// real post ending in "...: pic.twitter.com/x" keeps its title). oEmbed shows the image as
+// a pic.twitter.com link; Twitterbot's og:description can be just the t.co link.
+const MEDIA_ONLY_OEMBED = /^pic\.twitter\.com\/\S+$/;
+const MEDIA_ONLY_TWITTERBOT = /^(?:pic\.twitter\.com\/\S+|https:\/\/t\.co\/\S+)$/;
+
+type Stage = "reread" | "patch";
+
+// Claude stage slot. M1 has no Claude, so there's never a cleaned title; SAT-15 fills this
+// with its own timeout and signal.
+async function claudeStage(_job: EnrichJob, _lookup: LookupResult): Promise<string | null> {
+  return null;
+}
+
+// R2: whitespace collapsed (X `<br>` newlines included) and trimmed. Empty and URL-equal
+// titles carry nothing, so they're no title. titleProp truncates at 2000.
+export function usableTitle(title: string | null | undefined, storedUrl: string): string | null {
+  if (typeof title !== "string") return null;
+  const clean = title.replace(/\s+/g, " ").trim();
+  if (isMissingTitle(clean, storedUrl, storedUrl)) return null;
+  return clean;
+}
+
+// R2: an X lookup whose post text is only the media link has no title worth writing.
+export function isMediaOnlyX(lookup: LookupResult): boolean {
+  const text = (lookup.description ?? "").replace(/\s+/g, " ").trim();
+  if (lookup.source === "x-oembed") return MEDIA_ONLY_OEMBED.test(text);
+  if (lookup.source === "x-twitterbot") return MEDIA_ONLY_TWITTERBOT.test(text);
+  return false;
+}
+
+// The looked-up title for Name purposes, after R2 hygiene.
+function lookedUpTitle(lookup: LookupResult, storedUrl: string): string | null {
+  return isMediaOnlyX(lookup) ? null : usableTitle(lookup.title, storedUrl);
+}
+
+// R4: the Name's plain text, joined across its rich-text runs. Null when the shape is off,
+// which the guard reads as "changed" (never overwrite what we can't read).
+function currentName(properties: Record<string, unknown> | undefined): string | null {
+  const prop = properties?.[PROPS.name] as { title?: unknown } | undefined;
+  if (!prop || !Array.isArray(prop.title)) return null;
+  let text = "";
+  for (const run of prop.title) {
+    const plain = (run as { plain_text?: unknown } | null)?.plain_text;
+    if (typeof plain !== "string") return null;
+    text += plain;
+  }
+  return text;
+}
+
+// R4: the re-read Name still reads as what save wrote. Save wrote it through titleProp,
+// which truncates at 2000, so a long client title is compared truncated, like for like.
+export function nameUnchanged(job: EnrichJob, now: string | null): boolean {
+  if (now === null) return false;
+  return now.trim() === truncateText(job.clientTitle ?? job.fallbackTitle).trim();
+}
+
+// The URL property's value from the re-read, or null when the shape is off.
+function currentUrl(properties: Record<string, unknown> | undefined): string | null {
+  const url = (properties?.[PROPS.url] as { url?: unknown } | undefined)?.url;
+  return typeof url === "string" ? url : null;
+}
+
+// R5 plus the lead's PR #17 rulings: X only, oEmbed's canonical when it differs from what's
+// stored, only when it names the same post id, and only while the row's URL is still the
+// stored one (an edit in Notion wins). urlProp's 2000 guard (or any other throw) drops just
+// the URL, never the Name.
+function urlSwap(job: EnrichJob, lookup: LookupResult, now: string | null): Properties {
+  if (job.kind !== "x" || !lookup.url || lookup.url === job.storedUrl) return {};
+  const id = /\/status\/(\d+)$/.exec(job.storedUrl)?.[1];
+  if (!id || !new RegExp(`/status/${id}(?:$|\\D)`).test(lookup.url)) return {};
+  if (now !== job.storedUrl) return {};
+  try {
+    return urlProp(lookup.url);
+  } catch {
+    return {};
+  }
+}
+
+function failed(stage: Stage | "unexpected", pageId: unknown, err: unknown): void {
+  const fields: Record<string, unknown> = { ok: false, stage, pageId };
+  if (err instanceof NotionError) {
+    fields.status = err.status;
+    fields.error = err.code;
+  } else {
+    fields.error = err instanceof Error ? err.name : "unknown";
+  }
+  logEvent("enrich_failed", fields);
+}
+
+export async function enrich(job: EnrichJob, env: Env): Promise<void> {
+  const start = Date.now();
+  let stage: Stage | "unexpected" = "unexpected";
+  try {
+    // Lookup: skipped when the client sent a title.
+    const lookup: LookupResult =
+      job.clientTitle !== undefined
+        ? { title: null, source: "client", bytesRead: 0 }
+        : await lookupTitle(job.storedUrl, job.kind, AbortSignal.timeout(LOOKUP_STAGE_MS));
+
+    const claudeTitle = await claudeStage(job, lookup);
+
+    const client = notion(env);
+
+    stage = "reread";
+    const page = await client.retrievePage(job.pageId, { timeoutMs: REREAD_MS });
+    stage = "unexpected";
+
+    const props: Properties = {};
+
+    const name = usableTitle(claudeTitle, job.storedUrl) ?? lookedUpTitle(lookup, job.storedUrl);
+    if (name !== null && nameUnchanged(job, currentName(page.properties))) {
+      Object.assign(props, titleProp(name));
+    }
+    Object.assign(props, urlSwap(job, lookup, currentUrl(page.properties)));
+
+    stage = "patch";
+
+    if (Object.keys(props).length === 0) {
+      logEvent("enrich", {
+        ok: true,
+        pageId: job.pageId,
+        source: lookup.source,
+        ms: Date.now() - start,
+        patched: false,
+      });
+      return;
+    }
+
+    await client.patchPage(job.pageId, props, { timeoutMs: PATCH_MS });
+    logEvent("enrich", {
+      ok: true,
+      pageId: job.pageId,
+      source: lookup.source,
+      ms: Date.now() - start,
+      patched: true,
+    });
+  } catch (err) {
+    try {
+      failed(err instanceof NotionError ? stage : "unexpected", job?.pageId, err);
+    } catch {
+      // Logging itself failed; there's nothing left to do, and enrich must never throw.
+    }
+  }
+}
