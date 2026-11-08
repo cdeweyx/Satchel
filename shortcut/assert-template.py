@@ -29,13 +29,13 @@ EXPECTED_ACTIONS = [
     (A + "gettext", None),              # 1 Text: KEY_PLACEHOLDER
     (A + "text.replace", None),         # 2 Replace Text /$
     (A + "choosefrommenu", 0),          # 3 Choose from Menu
-    (A + "choosefrommenu", 1),          # 4 Later
+    (A + "choosefrommenu", 1),          # 4 Send to inbox (later)
     (A + "gettext", None),              # 5 Text later
     (A + "setvariable", None),          # 6 Set Variable status
-    (A + "choosefrommenu", 1),          # 7 Read
+    (A + "choosefrommenu", 1),          # 7 Mark as archived (read)
     (A + "gettext", None),              # 8 Text read
     (A + "setvariable", None),          # 9 Set Variable status
-    (A + "choosefrommenu", 1),          # 10 ★ Favorite
+    (A + "choosefrommenu", 1),          # 10 Favorite (favorite)
     (A + "gettext", None),              # 11 Text favorite
     (A + "setvariable", None),          # 12 Set Variable status
     (A + "choosefrommenu", 2),          # 13 End Menu
