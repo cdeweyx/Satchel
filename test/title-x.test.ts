@@ -2,7 +2,7 @@
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { lookupTitle } from "../src/title";
-import { lookupX, pageText } from "../src/title/x";
+import { isOnlyLinks, lookupX, pageText } from "../src/title/x";
 import articleText from "./fixtures/x-article.json?raw";
 import { network } from "./network";
 
@@ -640,4 +640,130 @@ describe("SAT-48: an X post's own photo", () => {
       expect(elapsed).toBeLessThan(4900);
     },
   );
+});
+
+// SAT-55: an oEmbed for a post whose <p> is `paragraph`, author Naval.
+const oembedWith = (paragraph: string) =>
+  `{"url":"https://x.com/naval/status/${ID}","author_name":"Naval","author_url":"https://twitter.com/naval","html":${esc(
+    `<blockquote class="twitter-tweet" data-dnt="true"><p lang="en" dir="ltr">${paragraph}</p>&mdash; Naval (@naval) <a href="https://twitter.com/naval/status/${ID}">May 31, 2018</a></blockquote>\n`,
+  )},"type":"rich","version":"1.0"}`;
+
+describe("SAT-55: named entities in X post text", () => {
+  const encoded =
+    "Ship it &mdash; today&hellip; &ldquo;Quoted&rdquo; &lsquo;single&rsquo; 1&ndash;2&nbsp;days &amp; &lt;b&gt; &apos;a&apos; &quot;q&quot;";
+  const decoded = "Ship it — today… “Quoted” ‘single’ 1–2 days & <b> 'a' \"q\"";
+
+  it("oEmbed post text decodes mdash, ndash, hellip, nbsp and curly quotes", async () => {
+    network.use(http.get(OEMBED, () => jsonText(oembedWith(encoded))));
+
+    const result = await lookupX(ID, signal());
+
+    expect(result?.description).toBe(decoded);
+    expect(result?.title).toBe(`Naval: ${decoded}`);
+  });
+
+  it("the Twitterbot page's og tags decode them too", async () => {
+    network.use(
+      http.get(OEMBED, () => htmlText(NOT_FOUND_HTML, 404)),
+      http.get(PAGE, () => htmlText(xPage("Naval &mdash; N (@naval) on X", encoded))),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(result).toMatchObject({ author: "Naval — N", description: decoded, source: "x-twitterbot" });
+  });
+
+  it("an unknown named entity stays as written", async () => {
+    network.use(http.get(OEMBED, () => jsonText(oembedWith("A &notanentity; B &mdash C"))));
+
+    const result = await lookupX(ID, signal());
+
+    expect(result?.description).toBe("A &notanentity; B &mdash C");
+  });
+});
+
+describe("SAT-55: a display URL is a link only when X marks it as one", () => {
+  it("words that look like a host plus a path are post text", () => {
+    expect(isOnlyLinks("Node.js/Deno")).toBe(false);
+    expect(isOnlyLinks("Node.js/Deno ship today")).toBe(false);
+    expect(isOnlyLinks("box.com/blog/ai-agents-a…")).toBe(false);
+  });
+
+  it("t.co, pic.twitter.com and any http(s) URL are links from the text alone", () => {
+    expect(isOnlyLinks("https://t.co/a pic.twitter.com/b")).toBe(true);
+    expect(isOnlyLinks("https://www.box.com/blog/ai-agents")).toBe(true);
+  });
+
+  it("a display URL is a link when it's the text of one of the post's t.co anchors", () => {
+    expect(isOnlyLinks("box.com/blog/ai-agents-a…", ["box.com/blog/ai-agents-a…"])).toBe(true);
+    expect(isOnlyLinks("box.com/blog/x pic.twitter.com/b", ["box.com/blog/x"])).toBe(true);
+    expect(isOnlyLinks("Node.js/Deno box.com/blog/x", ["box.com/blog/x"])).toBe(false);
+    expect(isOnlyLinks("Node.js/Deno", [""])).toBe(false);
+  });
+
+  it("oEmbed: `links` holds the display text of t.co anchors only, never hashtags, mentions or text", async () => {
+    network.use(
+      http.get(OEMBED, () =>
+        jsonText(
+          oembedWith(
+            'Node.js/Deno ship today <a href="https://t.co/a">deno.com/blog/v2…</a> ' +
+              '<a href="https://t.co/b">https://t.co/b</a> <a href="https://t.co/c">pic.twitter.com/c</a> ' +
+              '<a href="https://twitter.com/hashtag/JS?src=hash&amp;ref_src=twsrc%5Etfw">#JS</a> ' +
+              '<a href="https://twitter.com/deno_land?ref_src=twsrc%5Etfw">@deno_land</a> ' +
+              '<a href="https://t.co/d">example.com/a&amp;b</a>',
+          ),
+        ),
+      ),
+      http.get(PAGE, () => htmlText("<html></html>", 404)),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(result?.description).toBe(
+      "Node.js/Deno ship today deno.com/blog/v2… https://t.co/b pic.twitter.com/c #JS @deno_land example.com/a&b",
+    );
+    expect(result?.links).toEqual(["deno.com/blog/v2…", "example.com/a&b"]);
+  });
+
+  it("oEmbed: a post with no display-URL anchor has no `links`", async () => {
+    network.use(http.get(OEMBED, () => jsonText(OPENAI_OEMBED)));
+
+    const result = await lookupX(ID, signal());
+
+    expect(result).not.toHaveProperty("links");
+  });
+
+  it("oEmbed: a <p> that's only a display-URL anchor reads the page for text (SAT-43)", async () => {
+    const { seen, record } = recorder();
+    network.use(
+      http.get(OEMBED, () => jsonText(oembedWith('<a href="https://t.co/Lv1eB0x">box.com/blog/ai-agents-a…</a>'))),
+      http.get(PAGE, ({ request }) => {
+        record(request);
+        return htmlText(xPage("Naval on X: &quot;An Article&quot; / X", "An Article…"));
+      }),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(seen).toHaveLength(1);
+    expect(result).toMatchObject({ description: "An Article", article: true });
+    // The article title replaced the oEmbed text, so its links no longer apply.
+    expect(result).not.toHaveProperty("links");
+  });
+
+  it("oEmbed: a <p> whose only host-and-path-looking text isn't an anchor is post text", async () => {
+    const { seen, record } = recorder();
+    network.use(
+      http.get(OEMBED, () => jsonText(oembedWith("Node.js/Deno"))),
+      http.get(PAGE, ({ request }) => {
+        record(request);
+        return htmlText(NAVAL_PAGE);
+      }),
+    );
+
+    const result = await lookupX(ID, signal());
+
+    expect(seen).toHaveLength(0);
+    expect(result?.description).toBe("Node.js/Deno");
+  });
 });
