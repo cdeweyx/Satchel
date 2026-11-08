@@ -895,9 +895,11 @@ describe("backfill Notion pacing on the real clock", () => {
     const pages: Fixture[] = entries.map((e) => ({ id: e.pageId, title: e.written!.title, url: null, tags: [], archived: true }));
     const { notion } = mock([], () => undefined, pages);
 
-    // Each start stamped by the clock the script reads, when Notion receives it.
+    // Each start as the script timed it: the last now() before a request is the lastStart it
+    // spaces from, so a handler records that, not its own (later, load-dependent) Date.now().
+    let last = 0;
     const starts: number[] = [];
-    const stamp = () => starts.push(Date.now());
+    const stamp = () => starts.push(last);
     network.use(
       http.get(DS, () => {
         stamp();
@@ -913,7 +915,11 @@ describe("backfill Notion pacing on the real clock", () => {
         return HttpResponse.json({ object: "page", id: params.id, properties: {} });
       }),
     );
-    const d = deps({ minIntervalMs: 20, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) });
+    const d = deps({
+      minIntervalMs: 20,
+      now: () => (last = Date.now()),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    });
     await rollback(d, `${out}/rollback.jsonl`);
 
     expect(d.lines).toContain("Rows restored: 3");
