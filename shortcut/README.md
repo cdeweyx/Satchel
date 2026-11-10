@@ -27,17 +27,18 @@ You need a Mac with the Shortcuts app, a network connection (signing needs it), 
    - **Answer the questions on Add Shortcut.** The first asks for your Worker URL: the base only, like `https://satchel.<you>.workers.dev`, without `/save`. The second asks for your Satchel key (`SATCHEL_KEY`). Then tap **Add Shortcut**.
    - **Or edit the Shortcut afterward.** If the questions don't show, or you skipped them, add the Shortcut, then open it in the Shortcuts app to edit. The first Text box holds the Worker URL and the second holds the key. Replace whatever's in each (a placeholder like `WORKER_URL_PLACEHOLDER`, or nothing) with your own values.
 
-4. Check it. In Safari, tap Share, then **Satchel**, then pick **Send to inbox**. You should see "Saved ✓" and a new row in Notion. A wrong or empty key shows "Satchel: not saved" with `unauthorized`, so fix the second Text box if you see that.
+4. Check it. In Safari, tap Share, then **Satchel**. You should see "Saved ✓" and a new row in your Notion inbox. A wrong or empty key shows "Satchel: not saved" with `unauthorized`, so fix the second Text box if you see that.
 
 5. Optional: in any share sheet, scroll to the end of the action list, tap **Edit Actions…**, and move Satchel into Favorites so it sits near the top.
 
-The menu matches the Chrome popup:
+There's no menu. Every save from the phone sends `status: "later"` (Send to inbox), since the phone is for capture, not triage. Archive and Favorite live in the Chrome popup. Re-sharing a link you'd already archived or favorited moves it back to the inbox, since the latest status wins.
 
-| Menu item | Status sent |
-|---|---|
-| Send to inbox | `later` |
-| Mark as archived | `read` |
-| Favorite | `favorite` |
+### Updating from the menu version
+
+If your phone has the older Shortcut that asked Send to inbox / Mark as archived / Favorite, either:
+
+- **Reinstall.** Delete the old Satchel Shortcut, then follow steps 1 to 4 above. Deleting first keeps the new one from importing as "Satchel 2".
+- **Or edit it in place.** Open the Shortcut, delete the Choose from Menu block (every item and its Text and Set Variable go with it), then in Get Contents of URL set the `status` field to the text `later`.
 
 ### Re-signing
 
@@ -50,21 +51,18 @@ Shows in the share sheet for URLs, Safari pages, articles and text. Actions, in 
 1. [0] **Text**: `WORKER_URL_PLACEHOLDER`. Import question 1 fills it: the Worker's base URL, without `/save`.
 2. [1] **Text**: `KEY_PLACEHOLDER`. Import question 2 fills it with `SATCHEL_KEY`. The question's default is empty, so a skipped prompt sends an empty key and gets a visible 401.
 3. [2] **Replace Text**: in the URL text, replace the regex `/$` with nothing, so a trailing slash can't turn the request into `//save`.
-4. [3] **Choose from Menu** "Save to Satchel": Send to inbox / Mark as archived / Favorite.
-5. [4-12] Each item: **Text** `later` / `read` / `favorite`, then **Set Variable** `status`.
-6. [13] **End Menu**.
-7. [14] **Get Name** of Shortcut Input. Safari gives the page title; X and Mail give the URL, which the Worker treats as no title.
-8. [15] **Get Contents of URL**: `<Updated Text>/save`, method `POST`, request body JSON `url` = Shortcut Input as URL, `title` = Name, `status` = `status`. One header: `x-satchel-key` = the key Text. `Advanced` and `ShowHeaders` are on, or the editor drops the method and headers.
-9. [16] **Get Dictionary Value** `ok` from Contents of URL.
-10. [17] **If** Dictionary Value (as Number) is 1. JSON `true` is 1; a missing `ok`, `false`, or a non-JSON body isn't.
-11. [18] **Show Notification** "Satchel" / "Saved ✓".
-12. [19] **Otherwise**.
-13. [20] **Get Dictionary Value** `error` from Contents of URL.
-14. [21] **If** Dictionary Value has any value.
-15. [22] **Show Notification** "Satchel: not saved" / the `error` value.
-16. [23] **Otherwise**.
-17. [24] **Show Notification** "Satchel: not saved" / "unexpected response".
-18. [25] **End If** (inner), [26] **End If** (outer).
+4. [3] **Get Name** of Shortcut Input. Safari gives the page title; X and Mail give the URL, which the Worker treats as no title.
+5. [4] **Get Contents of URL**: `<Updated Text>/save`, method `POST`, request body JSON `url` = Shortcut Input as URL, `title` = Name, `status` = the text `later`. One header: `x-satchel-key` = the key Text. `Advanced` and `ShowHeaders` are on, or the editor drops the method and headers.
+6. [5] **Get Dictionary Value** `ok` from Contents of URL.
+7. [6] **If** Dictionary Value (as Number) is 1. JSON `true` is 1; a missing `ok`, `false`, or a non-JSON body isn't.
+8. [7] **Show Notification** "Satchel" / "Saved ✓".
+9. [8] **Otherwise**.
+10. [9] **Get Dictionary Value** `error` from Contents of URL.
+11. [10] **If** Dictionary Value has any value.
+12. [11] **Show Notification** "Satchel: not saved" / the `error` value.
+13. [12] **Otherwise**.
+14. [13] **Show Notification** "Satchel: not saved" / "unexpected response".
+15. [14] **End If** (inner), [15] **End If** (outer).
 
 So "Saved ✓" shows only for a JSON body with `ok: true`. A 404, 500, empty 405 or an HTML error page reads as not saved.
 
@@ -76,11 +74,10 @@ If `shortcuts sign` won't produce a file, build the same Shortcut by hand on the
 2. Add **Text**, type your Worker base URL (no `/save`).
 3. Add **Text**, paste your `SATCHEL_KEY`.
 4. Add **Replace Text**. Find `/$`, replace with nothing, turn on **Regular Expression**, and set the input to the first Text.
-5. Add **Choose from Menu**, prompt "Save to Satchel", items `Send to inbox`, `Mark as archived`, `Favorite`. Under each item add **Text** (`later`, `read`, `favorite`) and then **Set Variable** `status` to that Text.
-6. After End Menu, add **Get Name** of Shortcut Input.
-7. Add **Get Contents of URL**. URL: the Updated Text variable from step 4, then type `/save`. Expand it: Method **POST**, add one header `x-satchel-key` = the Text from step 3 (exactly one header row; an empty extra row breaks POSTs). Request Body **JSON** with three Text fields: `url` = Shortcut Input (tap it, set type to URL), `title` = Name, `status` = the `status` variable.
-8. Add **Get Dictionary Value**, Get Value for `ok` in Contents of URL.
-9. Add **If** Dictionary Value (tap it, set type to Number) **is** `1`.
-10. Inside If: **Show Notification** "Saved ✓".
-11. Inside Otherwise: **Get Dictionary Value** for `error` in Contents of URL, then **If** that Dictionary Value **has any value**: **Show Notification** "Satchel: not saved" with the Dictionary Value; Otherwise **Show Notification** "Satchel: not saved" with the text `unexpected response`.
-12. Test with a wrong key first: share any page, expect "Satchel: not saved" / `unauthorized`. Then fix the key and expect "Saved ✓".
+5. Add **Get Name** of Shortcut Input.
+6. Add **Get Contents of URL**. URL: the Updated Text variable from step 4, then type `/save`. Expand it: Method **POST**, add one header `x-satchel-key` = the Text from step 3 (exactly one header row; an empty extra row breaks POSTs). Request Body **JSON** with three Text fields: `url` = Shortcut Input (tap it, set type to URL), `title` = Name, `status` = the text `later`.
+7. Add **Get Dictionary Value**, Get Value for `ok` in Contents of URL.
+8. Add **If** Dictionary Value (tap it, set type to Number) **is** `1`.
+9. Inside If: **Show Notification** "Saved ✓".
+10. Inside Otherwise: **Get Dictionary Value** for `error` in Contents of URL, then **If** that Dictionary Value **has any value**: **Show Notification** "Satchel: not saved" with the Dictionary Value; Otherwise **Show Notification** "Satchel: not saved" with the text `unexpected response`.
+11. Test with a wrong key first: share any page, expect "Satchel: not saved" / `unauthorized`. Then fix the key and expect "Saved ✓".

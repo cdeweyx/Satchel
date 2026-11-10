@@ -96,10 +96,6 @@ def shortcut_input(coerce=None):
     return ref
 
 
-def named(name):
-    return {"Type": "Variable", "VariableName": name}
-
-
 def attachment(ref):
     return {"Value": ref, "WFSerializationType": "WFTextTokenAttachment"}
 
@@ -135,15 +131,16 @@ def act(ident, **params):
 # ---- actions ----------------------------------------------------------------
 
 U_URL, U_KEY, U_BASE = uid("text.worker-url"), uid("text.key"), uid("replace.base-url")
-U_MENU, U_NAME, U_POST = uid("menu.status"), uid("getitemname"), uid("downloadurl")
+U_NAME, U_POST = uid("getitemname"), uid("downloadurl")
 U_OK, U_IF_OK, U_ERR, U_IF_ERR = uid("value.ok"), uid("if.ok"), uid("value.error"), uid("if.error")
 
-# Labels match the Chrome popup (extension/popup.js LABELS); the status values sent to the Worker don't change.
-MENU = [("Send to inbox", "later"), ("Mark as archived", "read"), ("Favorite", "favorite")]
+# The phone is for capture, not triage (SAT-59): every save goes to Inbox. Archive and Favorite
+# live in the Chrome popup.
+STATUS = "later"
 
 
 def actions():
-    a = [
+    return [
         # 0, 1: import questions point here; the fallback is editing these two boxes.
         act("gettext", UUID=U_URL, WFTextActionText=text(URL_PLACEHOLDER)),
         act("gettext", UUID=U_KEY, WFTextActionText=text(KEY_PLACEHOLDER)),
@@ -151,17 +148,6 @@ def actions():
         act("text.replace", UUID=U_BASE, WFInput=var_text(output(U_URL, "Text")),
             WFReplaceTextFind="/$", WFReplaceTextReplace="",
             WFReplaceTextRegularExpression=True, WFReplaceTextCaseSensitive=True),
-        act("choosefrommenu", WFControlFlowMode=0, GroupingIdentifier=U_MENU,
-            WFMenuPrompt="Save to Satchel", WFMenuItems=[title for title, _ in MENU]),
-    ]
-    for title, status in MENU:
-        a += [
-            act("choosefrommenu", WFControlFlowMode=1, GroupingIdentifier=U_MENU, WFMenuItemTitle=title),
-            act("gettext", UUID=uid(f"text.status.{status}"), WFTextActionText=text(status)),
-            act("setvariable", WFVariableName="status", WFInput=attachment(output(uid(f"text.status.{status}"), "Text"))),
-        ]
-    a += [
-        act("choosefrommenu", WFControlFlowMode=2, GroupingIdentifier=U_MENU, UUID=uid("menu.status.end")),
         act("getitemname", UUID=U_NAME, WFInput=attachment(shortcut_input())),
         act("downloadurl", UUID=U_POST, Advanced=True, ShowHeaders=True,
             WFHTTPMethod="POST", WFHTTPBodyType="JSON",
@@ -170,7 +156,7 @@ def actions():
             WFJSONValues=fields(
                 field("url", var_text(shortcut_input(coerce="WFURLContentItem"))),
                 field("title", var_text(output(U_NAME, "Name"))),
-                field("status", var_text(named("status"))),
+                field("status", text(STATUS)),
             )),
         act("getvalueforkey", UUID=U_OK, WFGetDictionaryValueType="Value", WFDictionaryKey="ok",
             WFInput=attachment(output(U_POST, "Contents of URL"))),
@@ -193,7 +179,6 @@ def actions():
         act("conditional", WFControlFlowMode=2, GroupingIdentifier=U_IF_ERR, UUID=uid("if.error.end")),
         act("conditional", WFControlFlowMode=2, GroupingIdentifier=U_IF_OK, UUID=uid("if.ok.end")),
     ]
-    return a
 
 
 def workflow():

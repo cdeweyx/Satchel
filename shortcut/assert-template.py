@@ -28,31 +28,22 @@ EXPECTED_ACTIONS = [
     (A + "gettext", None),              # 0 Text: WORKER_URL_PLACEHOLDER
     (A + "gettext", None),              # 1 Text: KEY_PLACEHOLDER
     (A + "text.replace", None),         # 2 Replace Text /$
-    (A + "choosefrommenu", 0),          # 3 Choose from Menu
-    (A + "choosefrommenu", 1),          # 4 Send to inbox (later)
-    (A + "gettext", None),              # 5 Text later
-    (A + "setvariable", None),          # 6 Set Variable status
-    (A + "choosefrommenu", 1),          # 7 Mark as archived (read)
-    (A + "gettext", None),              # 8 Text read
-    (A + "setvariable", None),          # 9 Set Variable status
-    (A + "choosefrommenu", 1),          # 10 Favorite (favorite)
-    (A + "gettext", None),              # 11 Text favorite
-    (A + "setvariable", None),          # 12 Set Variable status
-    (A + "choosefrommenu", 2),          # 13 End Menu
-    (A + "getitemname", None),          # 14 Get Name
-    (A + "downloadurl", None),          # 15 Get Contents of URL
-    (A + "getvalueforkey", None),       # 16 Get Dictionary Value ok
-    (A + "conditional", 0),             # 17 If ok
-    (A + "notification", None),         # 18 Saved ✓
-    (A + "conditional", 1),             # 19 Otherwise
-    (A + "getvalueforkey", None),       # 20 Get Dictionary Value error
-    (A + "conditional", 0),             # 21 If error has any value
-    (A + "notification", None),         # 22 not saved / error
-    (A + "conditional", 1),             # 23 Otherwise
-    (A + "notification", None),         # 24 not saved / unexpected response
-    (A + "conditional", 2),             # 25 End If (inner)
-    (A + "conditional", 2),             # 26 End If (outer)
+    (A + "getitemname", None),          # 3 Get Name
+    (A + "downloadurl", None),          # 4 Get Contents of URL
+    (A + "getvalueforkey", None),       # 5 Get Dictionary Value ok
+    (A + "conditional", 0),             # 6 If ok
+    (A + "notification", None),         # 7 Saved ✓
+    (A + "conditional", 1),             # 8 Otherwise
+    (A + "getvalueforkey", None),       # 9 Get Dictionary Value error
+    (A + "conditional", 0),             # 10 If error has any value
+    (A + "notification", None),         # 11 not saved / error
+    (A + "conditional", 1),             # 12 Otherwise
+    (A + "notification", None),         # 13 not saved / unexpected response
+    (A + "conditional", 2),             # 14 End If (inner)
+    (A + "conditional", 2),             # 15 End If (outer)
 ]
+
+POST = 4  # index of Get Contents of URL
 
 INPUT_CLASSES = {"WFURLContentItem", "WFSafariWebPageContentItem", "WFArticleContentItem", "WFStringContentItem"}
 ALLOWED_PLACEHOLDERS = {"WORKER_URL_PLACEHOLDER", "KEY_PLACEHOLDER"}
@@ -133,15 +124,21 @@ def check(wf):
     key_uuid = params[1].get("UUID")
 
     # 3. Exactly one header row, x-satchel-key = the key Text.
-    headers = params[15].get("WFHTTPHeaders", {}).get("Value", {}).get("WFDictionaryFieldValueItems")
+    headers = params[POST].get("WFHTTPHeaders", {}).get("Value", {}).get("WFDictionaryFieldValueItems")
     if need(isinstance(headers, list) and len(headers) == 1,
             f"Get Contents of URL needs exactly one header row, found {len(headers) if isinstance(headers, list) else 'none'}"):
         row = headers[0]
         need(token(row.get("WFKey")) == "x-satchel-key", f"header row key is {token(row.get('WFKey'))!r}, expected 'x-satchel-key'")
         refs = token_refs(row.get("WFValue"))
         need(len(refs) == 1 and refs[0].get("OutputUUID") == key_uuid, "x-satchel-key value isn't the key Text output")
-    need(params[15].get("WFHTTPMethod") == "POST", "Get Contents of URL method isn't POST")
-    need(params[15].get("Advanced") is True and params[15].get("ShowHeaders") is True, "Advanced and ShowHeaders must both be true")
+    # Every phone save goes to Inbox (SAT-59): the body's `status` is the plain text `later`, no variable.
+    body = params[POST].get("WFJSONValues", {}).get("Value", {}).get("WFDictionaryFieldValueItems") or []
+    status = [row for row in body if token(row.get("WFKey")) == "status"]
+    if need(len(status) == 1, f"JSON body needs exactly one `status` field, found {len(status)}"):
+        need(token(status[0].get("WFValue")) == "later" and not token_refs(status[0].get("WFValue")),
+             f"JSON body `status` is {token(status[0].get('WFValue'))!r}, expected the plain text 'later'")
+    need(params[POST].get("WFHTTPMethod") == "POST", "Get Contents of URL method isn't POST")
+    need(params[POST].get("Advanced") is True and params[POST].get("ShowHeaders") is True, "Advanced and ShowHeaders must both be true")
 
     # 4. Key import question defaults to "".
     questions = wf.get("WFWorkflowImportQuestions", [])

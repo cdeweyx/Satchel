@@ -11,16 +11,16 @@ The Notion web clipper saves to whichever account the Chrome profile holds, and 
 - Cloudflare free plan: under 3 ms CPU a save against a 10 ms cap (L4 probe). Claude about $0.00012 a save (L2 probe).
 - Single user, two Chrome profiles, one iPhone. Forkable: no secret in git, property names in one module.
 - Agent-built; every milestone has a check the agent runs alone.
-- Design fixed: popup shows page title then Send to inbox / Mark as archived / Favorite (keys L / R / F), flashes "Saved ✓", closes. Shortcut: menu, then notification. Brand precedes the extension.
+- Design fixed: popup shows page title then Send to inbox / Mark as archived / Favorite (keys L / R / F), flashes "Saved ✓", closes. Shortcut: no menu, every phone save goes to Inbox (SAT-59), then notification. Brand precedes the extension.
 - User calls: Notion down fails visibly, never retried. Re-save never re-runs Claude; latest status wins. All Chrome. Haiku 5.5. No new fields.
 
 ## 3. Scenarios
 
 **Work Chrome, a newsletter post.** Press R in the popup; the service worker posts URL and tab title. The Worker strips `utm_*`, finds no row, creates one with Archived true, returns 200 under a second. "Saved ✓". Two seconds later Claude has cut the site suffix and picked two tags.
 
-**iPhone, the X app.** Share a post, pick Later. The Shortcut sends the URL (with `?s=46&t=...`) and a title equal to the URL. The Worker reduces it to the post id, finds no row, creates one titled "@naval on X". JSON `ok`, "Saved ✓". Then oEmbed gives author and text, Claude writes "Naval: short gist", a tag lands.
+**iPhone, the X app.** Share a post, tap Satchel. The Shortcut sends the URL (with `?s=46&t=...`) and a title equal to the URL. The Worker reduces it to the post id, finds no row, creates one titled "@naval on X". JSON `ok`, "Saved ✓". Then oEmbed gives author and text, Claude writes "Naval: short gist", a tag lands.
 
-**Re-save, Later to Read.** A day later, Read from the phone. The dedupe query finds the row; Archived and Favorite follow the latest status. No Claude, no new row, hand-added tags stay.
+**Re-save, Later to Read.** A day later, Read from the Chrome popup. The dedupe query finds the row; Archived and Favorite follow the latest status. No Claude, no new row, hand-added tags stay.
 
 **Saturday, the Anthropic key has expired.** The row lands with the looked-up title, no tags; the banner said "Saved ✓". The enrich task gets a 401, logs one line, stops. The user spots the untagged row, hits Test in options, reads "Claude: key rejected", rotates the secret.
 
@@ -47,7 +47,7 @@ One save: auth → parse → canonicalize (no fetch) → dedupe query → create
 | Enricher and tag guard | raw title, URL, schema | title, option ids (max 3) | `@anthropic-ai/sdk`, cache |
 | Health | key or none | liveness or probes | no state |
 | Chrome extension | tab title, URL, preview (SAT-58), key | POST via service worker, badge | MV3, `storage`, `activeTab`, `scripting` |
-| iOS Shortcut | share item, menu pick | POST, notification | generator, signing |
+| iOS Shortcut | share item | POST, notification | generator, signing |
 
 ## 6. Data model
 
@@ -397,7 +397,7 @@ Every Worker milestone runs typecheck and tests plus the check below.
 
 **Extension (D-13).** Manifest: `manifest_version 3`, `action.default_popup`, `options_page`, `permissions: ["storage", "activeTab", "scripting"]` (`scripting` since SAT-58, no install warning), `commands._execute_action` with a suggested key the user can rebind. Manifest also declares a `background.service_worker`. Popup flow: read `chrome.storage.local` for URL and key; if missing, show "Set up Satchel" linking to options; `chrome.tabs.query({active: true, currentWindow: true})` for title and URL; render; SAT-58: `chrome.scripting.executeScript` reads the tab's preview (first https `og:image` or `twitter:image`; `og:description`, else meta description, else the first paragraph of 80+ characters in `article`, `main` or `body`) with `injectImmediately`; a save never waits for it: a press sends at once with the preview if the read has finished, else without (so closing the popup can't lose a save), and any failure sends without it; L / R / F and clicks send `{url, title, status, image?, description?}` to the service worker and disable all three; the service worker POSTs and replies. Success only when the response is JSON with `ok: true`: show "Saved ✓" and `window.close()` after about 600 ms; otherwise "Couldn't save, try again" with the `error` value (or "unexpected response") small underneath. If the popup has closed, a failure sets `chrome.action.setBadgeText("!")` in red until the next successful save clears it. Options: two inputs, Save, a "Test" button that calls the keyed `/health` and shows each field in plain words ("Notion: ok", "Claude: key rejected", "X oEmbed: down"); 401 shows "Key rejected", a network error "Can't reach Worker".
 
-**Shortcut (D-7), from L5.** Actions: Text (Worker URL, import question), Text (key, import question, default empty), Choose from Menu (Send to inbox / Mark as archived / Favorite) each setting a `status` variable, Get Name of shortcut input, Get Contents of URL (`POST`, JSON body `url` = shortcut input as URL, `title` = name, `status`; header `x-satchel-key`; `Advanced` and `ShowHeaders` true), Get Dictionary Value `ok`, If is true → Show Notification "Saved ✓", Otherwise → Get Dictionary Value `error` → Show Notification "Satchel: not saved" with the value, or "unexpected response" when it's empty (round 2). Top-level: `WFWorkflowTypes ["ActionExtension"]`, input classes `WFURLContentItem`, `WFSafariWebPageContentItem`, `WFArticleContentItem`, `WFStringContentItem`. Agent-run structural assertion on the unsigned template (round 2): expected action identifiers in order, exactly one `x-satchel-key` header row, the key Text default empty, the `ok` branch present. Validity check: signed file begins `AEA1`; `shortcuts sign` ran from an agent session with network and no user step (L5 probe). First device test uses a wrong key on purpose.
+**Shortcut (D-7), from L5.** Actions: Text (Worker URL, import question), Text (key, import question, default empty), Get Name of shortcut input, Get Contents of URL (`POST`, JSON body `url` = shortcut input as URL, `title` = name, `status` = `later`; header `x-satchel-key`; `Advanced` and `ShowHeaders` true), Get Dictionary Value `ok`, If is true → Show Notification "Saved ✓", Otherwise → Get Dictionary Value `error` → Show Notification "Satchel: not saved" with the value, or "unexpected response" when it's empty (round 2). Top-level: `WFWorkflowTypes ["ActionExtension"]`, input classes `WFURLContentItem`, `WFSafariWebPageContentItem`, `WFArticleContentItem`, `WFStringContentItem`. Agent-run structural assertion on the unsigned template (round 2): expected action identifiers in order, exactly one `x-satchel-key` header row, `status` the plain text `later`, the key Text default empty, the `ok` branch present. Validity check: signed file begins `AEA1`; `shortcuts sign` ran from an agent session with network and no user step (L5 probe). First device test uses a wrong key on purpose.
 
 </details>
 
