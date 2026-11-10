@@ -36,11 +36,13 @@ You send this:
 
 Satchel answers `{ "ok": true, "id": "<notion page id>" }` in a second or two, and a row shows up in Notion with the tracking params stripped and a placeholder title. Shortly after, the row gets a clean Title Case title and 1 to 3 tags.
 
-| In the popup and Shortcut | Status sent | Archived | Favorite |
+| In the popup | Status sent | Archived | Favorite |
 |---|---|---|---|
 | Send to inbox | `later` | off | off |
 | Mark as archived | `read` | on | off |
 | Favorite | `favorite` | on | on |
+
+The iPhone Shortcut has no menu: every save from the phone is **Send to inbox**.
 
 Saving a URL that's already in the database updates its status, so saving it as `later` and then as `read` moves the same row. A re-save never re-runs Claude.
 
@@ -215,7 +217,7 @@ The Shortcut puts Satchel in the iPhone share sheet. You build and sign it on a 
 
 4. Optional: in any share sheet, scroll to the end of the action list, tap **Edit Actions…**, and move Satchel into Favorites so it sits near the top.
 
-To save, tap Share, then **Satchel**, then **Send to inbox**, **Mark as archived** or **Favorite**. You'll see "Saved ✓", or "Satchel: not saved" with the error. Signing failures, re-signing and a manual build are in [`shortcut/README.md`](shortcut/README.md#install-on-your-iphone).
+To save, tap Share, then **Satchel**. Every save from the phone goes to your inbox; archive and favorite from Chrome. You'll see "Saved ✓", or "Satchel: not saved" with the error. Signing failures, re-signing and a manual build are in [`shortcut/README.md`](shortcut/README.md#install-on-your-iphone).
 
 ## See it as a gallery in Notion
 
