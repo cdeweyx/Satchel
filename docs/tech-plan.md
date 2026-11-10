@@ -18,9 +18,9 @@ The Notion web clipper saves to whichever account the Chrome profile holds, and 
 
 **Work Chrome, a newsletter post.** Press R in the popup; the service worker posts URL and tab title. The Worker strips `utm_*`, finds no row, creates one with Archived true, returns 200 under a second. "Saved ✓". Two seconds later Claude has cut the site suffix and picked two tags.
 
-**iPhone, the X app.** Share a post, pick Later. The Shortcut sends the URL (with `?s=46&t=...`) and a title equal to the URL. The Worker reduces it to the post id, finds no row, creates one titled "@naval on X". JSON `ok`, "Saved ✓". Then oEmbed gives author and text, Claude writes "Naval: short gist", a tag lands.
+**iPhone, the X app.** Share a post, tap Satchel. The Shortcut sends the URL (with `?s=46&t=...`) and a title equal to the URL. The Worker reduces it to the post id, finds no row, creates one titled "@naval on X". JSON `ok`, "Saved ✓". Then oEmbed gives author and text, Claude writes "Naval: short gist", a tag lands.
 
-**Re-save, Later to Read.** A day later, Read from the phone. The dedupe query finds the row; Archived and Favorite follow the latest status. No Claude, no new row, hand-added tags stay.
+**Re-save, Later to Read.** A day later, Read from the Chrome popup. The dedupe query finds the row; Archived and Favorite follow the latest status. No Claude, no new row, hand-added tags stay.
 
 **Saturday, the Anthropic key has expired.** The row lands with the looked-up title, no tags; the banner said "Saved ✓". The enrich task gets a 401, logs one line, stops. The user spots the untagged row, hits Test in options, reads "Claude: key rejected", rotates the secret.
 
