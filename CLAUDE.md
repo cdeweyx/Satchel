@@ -7,20 +7,20 @@ Plan: `docs/tech-plan.md` (decisions D-1 to D-17, appendix "Rules in full"). Bui
 ## Stack
 
 - Cloudflare Worker (TypeScript, `wrangler.jsonc`), free plan, Workers Logs on.
-- Notion over plain `fetch` (no Notion SDK, ever). Anthropic SDK for Claude, added in M2.
+- Notion over plain `fetch` (no Notion SDK, ever). Anthropic SDK for Claude.
 - Tests: Vitest 5 with `@cloudflare/vitest-plugin`, outbound mocks with `msw@3` + `@msw/cloudflare`.
 
 ## Commands
 
-- `npm run check`: `wrangler types`, `tsc --noEmit`, `vitest run`. Offline and fast. Must pass before any PR, and the Stop hook runs it.
+- `npm run check`: the Shortcut template assertion, `wrangler types`, `tsc --noEmit`, `vitest run`, the manifest check. Offline. Must pass before any PR, and the Stop hook runs it.
 - `npx wrangler dev`: local Worker on `http://localhost:8787`.
 - `npm run types`: regenerate `worker-configuration.d.ts` after editing `wrangler.jsonc` (commit it).
-- `npm run deploy`: lead only, at deploy gates (see `docs/build/README.md`).
+- `npm run deploy`: the lead (any build lead, or the user's own session) runs it whenever `main` is green. Implementers don't deploy. See `docs/build/README.md`.
 
 ## Standing rules
 
 - Never print, log or commit a secret. Never `cat` the secrets file; grep only the keys you need into a file in one command.
-- Satchel never retries Notion (D-10). A sync error returns 502 `notion_<code>` at once; a background failure logs `enrich_failed` and leaves the row as saved.
+- Satchel doesn't retry Notion (D-10), so Notion being down fails visibly inside the response budget. A sync error returns 502 `notion_<code>` at once; a background failure logs `enrich_failed` and leaves the row as saved. Two exceptions, both on purpose: enrich (`src/enrich.ts`) re-patches once after a tag patch's `validation_error`, because the tag options changed under the cache (D-6); and `scripts/backfill.ts` waits out a 429, because it's a local batch run with no response budget.
 - No `nodejs_compat` in `wrangler.jsonc` (D-11).
 - Tests never hit the network. `test/network.ts` installs a catch-all that fails any unmocked request; mock with `network.use(http.post(url, resolver))`.
 - Notion: send `Notion-Version: 2026-03-11` (`NOTION_VERSION` in `src/config.ts`) and create pages under the data source, not the database.

@@ -1,5 +1,7 @@
 # Satchel: build handoff
 
+> **Historical (2026-11-07):** the brief the V1 build started from. Where it disagrees with `docs/tech-plan.md` or the code, they win.
+
 Build **Satchel**, a tiny personal tool that saves links to my Notion reading database from Chrome (two profiles) and my iPhone, with Claude cleaning up titles and picking tags. Repo: https://github.com/cdeweyx/Satchel (private for now, built to go public later).
 
 ## Why it exists

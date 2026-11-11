@@ -1,7 +1,7 @@
 // Scores Claude's tags against hand-tagged rows (SAT-40). Dev tool, not part of the Worker.
 //
-//   set -a; . ~/.config/satchel/secrets.env; set +a
-//   node --experimental-transform-types scripts/eval-tags.ts <eval.jsonl> <tags.json>
+//   tmp=$(mktemp) && chmod 600 "$tmp" && grep -E '^ANTHROPIC_API_KEY=' ~/.config/satchel/secrets.env > "$tmp" \
+//     && (set -a; . "$tmp"; set +a; node --experimental-transform-types scripts/eval-tags.ts <eval.jsonl> <tags.json>); rm -f "$tmp"
 //
 // eval.jsonl: one {title, url, tags} per line. tags.json: the allowed tag names.
 // Calls the real cleanTitleAndTags from src/claude.ts (same prompt, same request) with the

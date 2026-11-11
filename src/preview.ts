@@ -1,6 +1,6 @@
 // SAT-48: the one block a new row's page body gets, so the Notion gallery card shows the
 // article's preview image or, failing that, its summary. Pure: lookup result in, block out.
-// The background task appends it (enrich.ts); SAT-49's backfill imports it unchanged.
+// The background task appends it (enrich.ts).
 // SAT-52: an X post with no photo gets its post text instead, links stripped.
 // SAT-58: a page whose lookup has no image falls back to what the Chrome extension read from
 // the open tab (clientPreviewBlock; the order is bodyBlock's in enrich.ts).
