@@ -1,5 +1,5 @@
 # Gitleaks config: the default rules plus any Anthropic key shape.
-# Allowlist nothing secret-shaped. Used by .githooks/pre-push.
+# Allowlist nothing secret-shaped. Used by .githooks/pre-push, CI and scripts/shortcut.sh.
 
 [extend]
 useDefault = true

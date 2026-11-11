@@ -233,7 +233,7 @@ Each new row gets the article's preview image as its page body when the page has
 
 ```sh
 npm ci              # also points git at .githooks
-npm run check       # wrangler types, tsc, vitest. Offline, a few seconds.
+npm run check       # Shortcut template, wrangler types, tsc, vitest, manifest. Offline.
 npx wrangler dev    # local Worker on http://localhost:8787
 ```
 

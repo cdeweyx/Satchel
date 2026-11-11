@@ -6,7 +6,7 @@ The share-sheet Shortcut that saves a link to Satchel (D-7 in `docs/tech-plan.md
 - `Satchel.unsigned.shortcut`: the generated binary plist, committed. Read it with `plutil -p`. The root `.gitignore` ignores `*.shortcut`, but the template is already tracked, so plain `git add` stages a regenerated copy. Only a new `.shortcut` file needs `git add -f`.
 - `glyph.txt` (from the brand step, optional): the icon. `key = value` lines, `#` comments: `glyph = <Shortcuts glyph number or bookmark>` and `color = <color name or number>`. Color names: red, darkorange, orange, yellow, green, teal, lightblue, blue, darkblue, violet, purple, pink, darkgray, gray, taupe. Without the file the generator uses the bookmark glyph in gray and says so.
 
-- `npm run shortcut` (`scripts/shortcut.sh`): regenerates the template, checks its shape, signs it to `dist/Satchel.shortcut`, checks the signed file starts with `AEA1`, and runs gitleaks over this folder. The signed file is gitignored and never committed.
+- `npm run shortcut` (`scripts/shortcut.sh`): regenerates the template, checks its shape, runs gitleaks over this folder, signs it to `dist/Satchel.shortcut`, and checks the signed file starts with `AEA1`. The signed file is gitignored and never committed.
 
 ## Install on your iPhone
 

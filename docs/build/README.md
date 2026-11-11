@@ -14,7 +14,7 @@ Mode: direct. No milestone branches. Every issue goes straight into `main` throu
 ## Check
 
 ```sh
-npm run check   # wrangler types --strict-vars=false && tsc --noEmit && vitest run
+npm run check   # shortcut/assert-template.py, wrangler types, tsc --noEmit, vitest run, scripts/check-manifest.mjs
 ```
 
 Offline and a few seconds long. The Stop hook in `.claude/settings.json` (`scripts/stop-check.sh`) runs it at the end of every turn and blocks on failure. Type regeneration is part of the check, so drift in `worker-configuration.d.ts` shows up in `git status`.
@@ -40,6 +40,8 @@ The secrets file lives at `~/.config/satchel/secrets.env`. Never print it, `cat`
 
 `wrangler.jsonc` lists the three Worker secrets under `secrets.required`, so `wrangler types` types them on a clean clone and `wrangler deploy` refuses any deploy (including the first) that doesn't carry them. The two IDs sit in `wrangler.jsonc` as the placeholder `set-at-deploy`.
 
+Who deploys: since V1 shipped, the lead (any build lead, or the user's own session) runs `npm run deploy` whenever `main` is green. Implementers don't deploy. The V1 gates at the end of this file are history.
+
 Every deploy runs:
 
 ```sh
@@ -53,7 +55,7 @@ npm run deploy -- --dry-run    # extra args pass through to wrangler deploy
 tmp=$(mktemp) && chmod 600 "$tmp" && grep -E '^(NOTION_TOKEN|ANTHROPIC_API_KEY|SATCHEL_KEY)=' ~/.config/satchel/secrets.env > "$tmp" && npx wrangler secret bulk "$tmp"; rm -f "$tmp"
 ```
 
-The deployed Worker URL isn't in the repo (it goes public in M6); it's `SATCHEL_URL` in the secrets file.
+The deployed Worker URL isn't in the repo (the repo is public); it's `SATCHEL_URL` in the secrets file.
 
 Wrangler auth, either:
 
@@ -87,7 +89,9 @@ tmp=$(mktemp) && chmod 600 "$tmp" && grep -E '^(NOTION_TOKEN|NOTION_DATA_SOURCE_
 - `--apply <dir>/plan.jsonl --out <dir>`: writes only the rows in the plan and only the properties that change (Name, Tags by option id through `guardTags`, URL). It re-reads each page right before writing it: a row that already holds the plan's new values is reported as `already applied` (a resumed run); a row whose Name, Tags or URL changed since the dry run (or that was trashed) is skipped, logged as `skipped: changed since dry run`; both are counted in the summary. Otherwise the fresh values (Name also as its raw rich text) and what's about to be written go to `<dir>/rollback.jsonl` before the write. A plan tag that doesn't map to a Tags option stops the run before anything is written.
 - `--rollback <dir>/rollback.jsonl`: writes the logged old values back (the Name's rich text exactly, links and formatting included), newest line first. It re-reads each page first and skips, with a warning, any row where a field apply wrote no longer holds what apply wrote, so edits made after the apply survive.
 
-## Gates (the build stops for the user here)
+## V1 gates (history)
+
+All passed. Kept as a record of where the V1 build stopped for the user; deploys no longer wait for a gate (see Secrets and deploy).
 
 - M0: SAT-7, after SAT-6. User runs `wrangler login` (or adds the Cloudflare token to the secrets file), confirms the Worker URL, opens `/health` in the work Chrome profile and checks Developer mode is available. On a Notion 404, stop and add the Satchel connection via ••• → Connections.
 - M2: SAT-17.

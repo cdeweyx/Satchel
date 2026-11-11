@@ -7,7 +7,7 @@
   "observability": {
     "enabled": true
   },
-  // Not secret, but never committed with real values (docs/handoff.md).
+  // Not secret, but never committed with real values (docs/build/README.md).
   // scripts/deploy.sh passes the real IDs with --var at deploy time.
   "vars": {
     "NOTION_DATABASE_ID": "set-at-deploy",

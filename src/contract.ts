@@ -21,11 +21,9 @@ export type SaveRequest = {
   description?: string;
 };
 
-export type SaveResponse = { ok: true; id: string } | { ok: false; error: ErrorCode };
-
 export type ProbeState = "ok" | "auth_failed" | "not_found" | `error ${number}`;
 
-// Keyless liveness is {ok: true}; keyed probes fill notion/claude/oembed (SAT-16 owns the final shape).
+// Keyless liveness is {ok: true}; keyed probes fill notion/claude/oembed.
 export type HealthResponse = {
   ok: boolean;
   error?: ErrorCode;
