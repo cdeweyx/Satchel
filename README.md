@@ -16,6 +16,10 @@
 </p>
 
 <p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="brand/readme/hero-dark-saved.png">
     <img src="brand/readme/hero-light-saved.png" width="720" alt="The Satchel popup open in Chrome on Paul Graham's essay How to Do Great Work, with Mark as archived pressed and stamped SAVED">
