@@ -10,6 +10,7 @@ import {
   guardTags,
   invalidateTagCache,
 } from "../src/tags";
+import merged from "./fixtures/tags-12.json";
 import { network } from "./network";
 
 const API = "https://api.notion.com/v1";
@@ -183,6 +184,12 @@ describe("guardTags", () => {
     expect(guardTags([], options)).toEqual([]);
     expect(guardTags(["Fake", "Also Fake"], options)).toEqual([]);
     expect(guardTags(["AI"], new Map())).toEqual([]);
+  });
+
+  it("PER-6: against the 12, a legacy name never comes out; Self-Improvement lands on Self-improvement's id", () => {
+    const twelve: TagOptions = new Map(merged.tags.map((name) => [name.toLowerCase(), { id: `id-${name}`, name }]));
+    for (const legacy of Object.keys(merged.legacy)) expect(guardTags([legacy], twelve), legacy).toEqual([]);
+    expect(guardTags(["Tech", "Growth", "Self-Improvement", "Mental Models"], twelve)).toEqual([{ id: "id-Self-improvement" }]);
   });
 
   it("returns plain {id} objects that pass the Notion client's tag guard", () => {
