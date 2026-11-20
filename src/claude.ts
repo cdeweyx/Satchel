@@ -18,12 +18,11 @@ export type ClaudeOutput = { title: string; tags: string[] };
 // The "any page text given" line reads "any description given": we never send page body
 // text (D-8). Four reviewed saves are held out of the examples on purpose, so the live
 // re-check measures the rules, not lookup. The 15 examples after the first 7 come from the
-// archive (SAT-40), chosen to show its contrasts: Startups over Growth, Mental Models over
-// Thinking, Product + Career, Mindfulness + Self-Improvement, and mostly one tag. "A Timeless
-// New Year" replaces an original example that turned out to be a scoring row. No example is
-// in the 40-row scoring set (scripts/eval-tags.ts). SAT-42 (user, 2026-11-08): an X post's
-// title is the gist alone, no author, so no example carries an "Author: " prefix (Naval,
-// Akshaya and Karri Saarinen dropped theirs; tags unchanged).
+// archive (SAT-40). "A Timeless New Year" replaces an original example that turned out to be
+// a scoring row. No example is in the 40-row scoring set (scripts/eval-tags.ts). SAT-42
+// (user, 2026-11-08): an X post's title is the gist alone, no author, so no example carries
+// an "Author: " prefix. PER-6 (user, 2026-11-20): Tags merged into 12, sentence case; each
+// meaning below names what it took in, and the examples carry their merged tags.
 const PROMPT = `You clean up titles for links saved to a personal reading database and pick tags for them.
 
 Title rules:
@@ -37,50 +36,45 @@ Title rules:
 Tag rules:
 - Pick one tag by default. Add a second only when the piece is substantially about that topic too. About half of saves get one tag, most of the rest two; three is rare (about 1 in 10). Never more than 3.
 - Prefer the most specific tag that fits.
-- Use a broad tag (Tech, Thinking, Growth) only when the piece is about that broad topic itself.
-- Never add Tech alongside AI or Engineering for an AI or engineering piece.
+- Use a broad tag (Thinking, Culture) only when the piece is about that broad topic itself.
 - Never tag by source or format: a link from X isn't about social media, a video isn't Video.
 - Use tags from the allowed list only. Never invent a tag. If nothing fits, pick the single closest one.
 
 What some tags mean here:
-- Tech: the business and strategy of the tech industry, not anything technical.
-- Product: the most common tag here: building, shipping and thinking about products, and the work of the people who make them (PMs, founders, designers on product teams).
-- Career: doing well at work: craft, growth in a role, teams, hiring, interviewing; often paired with Product.
-- Self-Improvement: life advice and personal habits.
-- Mindfulness: meaning and inner life.
-- Thinking: essays about ideas and how to think.
-- Growth: user and demand growth, not personal growth.
-- Trends: predictions and what's next.
-- Culture: cultural commentary.
-- Projects: things people built (apps, tools, side projects).
-- History: how things came to be, histories of objects, places and technology.
+- Product: the most common tag here: building, shipping and thinking about products, the work of the people who make them (PMs, founders, designers on product teams), and things people built (apps, tools, side projects).
+- Startups: starting and running a company: fundraising, money, and user and demand growth (not personal growth).
+- Career: doing well at work: craft, growth in a role, leadership, teams, hiring, interviewing; often paired with Product.
+- Engineering: building software, and the business and strategy of the tech industry.
+- Self-improvement: life advice, personal habits, learning and reading.
+- Mindfulness: meaning, inner life and relationships.
+- Thinking: essays about ideas and how to think, including mental models.
+- Culture: cultural commentary, trends and predictions, history, music and travel.
 - Design: visual and interaction design craft only; a product or strategy piece that mentions design isn't Design.
-- Philosophy: only when the piece is centrally about philosophy.
-- Communication: only when the piece is centrally about communication.
+- Writing: writing and communication craft.
 
 Examples (title → tags):
 - The Art of Vibe Design → Design
-- How to Get Rich Without Getting Lucky → Self-Improvement, Finance
+- How to Get Rich Without Getting Lucky → Self-improvement, Startups
 - How AI Agents & Claude Skills Work → AI
-- Paradigm Shifts and the Winner's Curse – Stratechery → Tech
+- Paradigm Shifts and the Winner's Curse – Stratechery → Engineering
 - Seven Phrases I Stole From Staff Engineers → Career
-- A Timeless New Year → Self-Improvement, Mindfulness
-- The Growth Maze vs The Idea Maze → Growth
+- A Timeless New Year → Self-improvement, Mindfulness
+- The Growth Maze vs The Idea Maze → Startups
 - The Startup Drake Equation → Startups
 - Lessons From My First Exit → Startups
 - Scarcity During Experimentation, Abundance During Scaling → Startups
-- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth
-- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth
+- How I Built a $300K ARR Consumer App in 8 Months → Startups
+- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Startups
 - Mistaking Outputs for Inputs → Thinking
-- Why Books Don't Work → Mental Models, Thinking
-- Building Without Predicting → Self-Improvement, Mental Models
+- Why Books Don't Work → Thinking
+- Building Without Predicting → Self-improvement, Thinking
 - Product Innovation Is Discovery Not Creation → Product
 - 10 Rules for Crafting Products That Stand Out → Product
 - Managing Up → Career
 - Why Are Big Tech Companies So Slow? → Career, Product
 - A Letter to Our Next PM → Career, Product
-- How to Calm the Anxious Brain → Self-Improvement, Mindfulness
-- The Paradox of "Finding Yourself" → Self-Improvement, Mindfulness
+- How to Calm the Anxious Brain → Self-improvement, Mindfulness
+- The Paradox of "Finding Yourself" → Self-improvement, Mindfulness
 
 Allowed tags: `;
 

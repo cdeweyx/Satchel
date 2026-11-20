@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ClaudeInput, cleanTitleAndTags, outputSchema, systemPrompt, userMessage } from "../src/claude";
 import fixturesText from "./fixtures/claude.json?raw";
+import merged from "./fixtures/tags-12.json";
 import { network } from "./network";
 
 // Response and error shapes follow research 02 (2026-11-07): a Messages response with an
@@ -183,10 +184,8 @@ describe("request shape", () => {
       "- Pick one tag by default. Add a second only when the piece is substantially about that topic too. About half of saves get one tag, most of the rest two; three is rare (about 1 in 10). Never more than 3.",
     );
     expect(prompt).toContain("- Prefer the most specific tag that fits.");
-    expect(prompt).toContain(
-      "- Use a broad tag (Tech, Thinking, Growth) only when the piece is about that broad topic itself.",
-    );
-    expect(prompt).toContain("- Never add Tech alongside AI or Engineering for an AI or engineering piece.");
+    expect(prompt).toContain("- Use a broad tag (Thinking, Culture) only when the piece is about that broad topic itself.");
+    expect(prompt).not.toContain("Never add Tech");
     expect(prompt).toContain("- Never tag by source or format: a link from X isn't about social media, a video isn't Video.");
     // Retired tags (2026-11-08) are never named in the prompt's own text.
     for (const retired of ["Cool", "Creativity", "Mindset", "Business", "Productivity", "Social Media"]) {
@@ -196,24 +195,38 @@ describe("request shape", () => {
     expect(prompt).not.toContain("Pick 1 to 3 tags");
   });
 
-  it("system prompt gives a one-line meaning for exactly these fourteen tags (SAT-40: Product and Career sharpened; Design, Philosophy, Communication gated)", () => {
+  it("system prompt gives a one-line meaning for exactly these ten tags (PER-6: each names what it took in)", () => {
     expect(section(systemPrompt(TAGS), "What some tags mean here:", "Examples (title → tags):")).toEqual([
       "What some tags mean here:",
-      "- Tech: the business and strategy of the tech industry, not anything technical.",
-      "- Product: the most common tag here: building, shipping and thinking about products, and the work of the people who make them (PMs, founders, designers on product teams).",
-      "- Career: doing well at work: craft, growth in a role, teams, hiring, interviewing; often paired with Product.",
-      "- Self-Improvement: life advice and personal habits.",
-      "- Mindfulness: meaning and inner life.",
-      "- Thinking: essays about ideas and how to think.",
-      "- Growth: user and demand growth, not personal growth.",
-      "- Trends: predictions and what's next.",
-      "- Culture: cultural commentary.",
-      "- Projects: things people built (apps, tools, side projects).",
-      "- History: how things came to be, histories of objects, places and technology.",
+      "- Product: the most common tag here: building, shipping and thinking about products, the work of the people who make them (PMs, founders, designers on product teams), and things people built (apps, tools, side projects).",
+      "- Startups: starting and running a company: fundraising, money, and user and demand growth (not personal growth).",
+      "- Career: doing well at work: craft, growth in a role, leadership, teams, hiring, interviewing; often paired with Product.",
+      "- Engineering: building software, and the business and strategy of the tech industry.",
+      "- Self-improvement: life advice, personal habits, learning and reading.",
+      "- Mindfulness: meaning, inner life and relationships.",
+      "- Thinking: essays about ideas and how to think, including mental models.",
+      "- Culture: cultural commentary, trends and predictions, history, music and travel.",
       "- Design: visual and interaction design craft only; a product or strategy piece that mentions design isn't Design.",
-      "- Philosophy: only when the piece is centrally about philosophy.",
-      "- Communication: only when the piece is centrally about communication.",
+      "- Writing: writing and communication craft.",
     ]);
+  });
+
+  it("PER-6: every tag the prompt names is one of the 12, and no legacy tag is named as a tag", () => {
+    const prompt = systemPrompt([]);
+    const named = [
+      ...section(prompt, "What some tags mean here:", "Examples (title → tags):")
+        .slice(1)
+        .map((l) => l.slice(2, l.indexOf(":"))),
+      ...section(prompt, "Examples (title → tags):", "Allowed tags: ")
+        .slice(1)
+        .flatMap((l) => l.split(" → ")[1]!.split(", ")),
+      ...prompt.match(/broad tag \(([^)]*)\)/)![1]!.split(", "),
+    ];
+    expect(named.length).toBeGreaterThan(30);
+    for (const tag of named) expect(merged.tags, tag).toContain(tag);
+    for (const legacy of [...Object.keys(merged.legacy), "Self-Improvement"]) {
+      expect(named, legacy).not.toContain(legacy);
+    }
   });
 
   it("SAT-42: an X request's system prompt says the title is the gist in Title Case, no author name or handle", async () => {
@@ -237,39 +250,39 @@ describe("request shape", () => {
     expect(system).not.toMatch(/Author:/);
     // No example teaches an "Author: …" title; the three that had one keep their tags.
     const examples = section(system, "Examples (title → tags):", "Allowed tags: ");
-    expect(examples).toContain("- How to Get Rich Without Getting Lucky → Self-Improvement, Finance");
-    expect(examples).toContain("- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth");
+    expect(examples).toContain("- How to Get Rich Without Getting Lucky → Self-improvement, Startups");
+    expect(examples).toContain("- How I Built a $300K ARR Consumer App in 8 Months → Startups");
     expect(examples).toContain("- 10 Rules for Crafting Products That Stand Out → Product");
     for (const author of ["Naval", "Akshaya", "Karri Saarinen"]) {
       expect(examples.some((l) => l.startsWith(`- ${author}`))).toBe(false);
     }
   });
 
-  it("system prompt holds six original examples, one swapped, plus fifteen archive examples (SAT-40; SAT-42 drops three author prefixes)", () => {
+  it("system prompt holds six original examples, one swapped, plus fifteen archive examples, with their PER-6 merged tags", () => {
     expect(section(systemPrompt(TAGS), "Examples (title → tags):", "Allowed tags: ")).toEqual([
       "Examples (title → tags):",
       "- The Art of Vibe Design → Design",
-      "- How to Get Rich Without Getting Lucky → Self-Improvement, Finance",
+      "- How to Get Rich Without Getting Lucky → Self-improvement, Startups",
       "- How AI Agents & Claude Skills Work → AI",
-      "- Paradigm Shifts and the Winner's Curse – Stratechery → Tech",
+      "- Paradigm Shifts and the Winner's Curse – Stratechery → Engineering",
       "- Seven Phrases I Stole From Staff Engineers → Career",
-      "- A Timeless New Year → Self-Improvement, Mindfulness",
-      "- The Growth Maze vs The Idea Maze → Growth",
+      "- A Timeless New Year → Self-improvement, Mindfulness",
+      "- The Growth Maze vs The Idea Maze → Startups",
       "- The Startup Drake Equation → Startups",
       "- Lessons From My First Exit → Startups",
       "- Scarcity During Experimentation, Abundance During Scaling → Startups",
-      "- How I Built a $300K ARR Consumer App in 8 Months → Startups, Growth",
-      "- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Growth",
+      "- How I Built a $300K ARR Consumer App in 8 Months → Startups",
+      "- The Best Way to Drive Demand in Marketplaces Is Hiding in Plain Sight → Startups",
       "- Mistaking Outputs for Inputs → Thinking",
-      "- Why Books Don't Work → Mental Models, Thinking",
-      "- Building Without Predicting → Self-Improvement, Mental Models",
+      "- Why Books Don't Work → Thinking",
+      "- Building Without Predicting → Self-improvement, Thinking",
       "- Product Innovation Is Discovery Not Creation → Product",
       "- 10 Rules for Crafting Products That Stand Out → Product",
       "- Managing Up → Career",
       "- Why Are Big Tech Companies So Slow? → Career, Product",
       "- A Letter to Our Next PM → Career, Product",
-      "- How to Calm the Anxious Brain → Self-Improvement, Mindfulness",
-      "- The Paradox of \"Finding Yourself\" → Self-Improvement, Mindfulness",
+      "- How to Calm the Anxious Brain → Self-improvement, Mindfulness",
+      "- The Paradox of \"Finding Yourself\" → Self-improvement, Mindfulness",
     ]);
   });
 

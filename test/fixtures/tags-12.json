@@ -1,0 +1,24 @@
+{
+  "note": "PER-6 (2026-11-20): the Articles Tags merged into these 12. The live schema holds only these; legacy maps each retired option to its new tag.",
+  "tags": ["AI", "Product", "Startups", "Career", "Design", "Engineering", "Self-improvement", "Thinking", "Data", "Culture", "Mindfulness", "Writing"],
+  "legacy": {
+    "Projects": "Product",
+    "Growth": "Startups",
+    "Finance": "Startups",
+    "Leadership": "Career",
+    "Tech": "Engineering",
+    "Learning": "Self-improvement",
+    "Reading": "Self-improvement",
+    "Mental Models": "Thinking",
+    "Trends": "Culture",
+    "History": "Culture",
+    "Music": "Culture",
+    "Travel": "Culture",
+    "Communication": "Writing",
+    "Relationships": "Mindfulness",
+    "Innovation": "Thinking",
+    "Psychology": "Thinking",
+    "Philosophy": "Thinking",
+    "Metrics": "Data"
+  }
+}
